@@ -1,0 +1,6 @@
+{
+  "methods":["google","apple","x"],
+  "headline":"Enter QuestLedger",
+  "subtitle":"Sign in to save your quests, build your financial character, and keep your progress.",
+  "style":{"mode":"dark","accentColor":"#d7f36a","backgroundColor":"#0b0f14","panelColor":"#121820","textColor":"#eef2f7","fontFamily":"Inter, system-ui, sans-serif","borderRadius":14}
+}
