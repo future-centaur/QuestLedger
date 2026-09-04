@@ -1,0 +1,26 @@
+# QuestLedger E2E tests
+
+## Test 1 - Sign in and reach a private QuestLedger workspace [sanity]
+Viewport: desktop
+Covers: authentication sign-in, protected state access, authenticated dashboard
+Expected: Actor A reaches a private dashboard and no private financial data is exposed while signed out.
+
+## Test 2 - Use QuestLedger on a phone without viewport scaling or clipped content
+Viewport: mobile
+Covers: responsive layout, viewport sizing, goal cards, forms, bottom navigation, modal sizing, no horizontal page overflow
+Expected: Content fits a 375px phone viewport without horizontal scrolling or browser zoom when inputs are focused.
+
+## Test 3 - Create and persist a private goal after authentication
+Viewport: mobile
+Covers: authenticated goal creation, user-scoped database write, persistence after reload
+Expected: A Rent goal remains visible with KSh 0 progress after refresh.
+
+## Test 4 - Keep two users' financial data isolated
+Viewport: desktop
+Covers: multi-user authorization boundary, user-scoped goals/accounts/buckets/events/profile
+Expected: Actor B cannot see Actor A's private goal or financial state.
+
+## Test 5 - Sign out and return to the public landing page
+Viewport: mobile
+Covers: authentication sign-out, anonymous access boundary, landing-page responsive layout
+Expected: Sign-out returns to the public landing page and it fits the mobile viewport without horizontal scrolling.
