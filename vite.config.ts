@@ -1,3 +1,12 @@
-import {defineConfig} from 'vite';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-export default defineConfig({plugins:[react()],base:'./',build:{rollupOptions:{maxParallelFileOps:128}}});
+
+export default defineConfig({
+    plugins: [react()],
+    base: './',
+    build: {
+        rollupOptions: {
+            maxParallelFileOps: 128,
+        },
+    },
+});
