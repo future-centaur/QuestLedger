@@ -1,99 +1,47 @@
 [
   {
-    "name": "Sign in and reach the financial workspace",
+    "name": "Sign in and reach the funded recurring workspace",
     "sanity": true,
     "viewport": "desktop",
-    "covers": [
-      "authentication sign-in",
-      "protected state access",
-      "financial dashboard"
-    ],
-    "description": "Verifies an authenticated player can reach the private QuestLedger workspace.",
-    "steps": [
-      "Open QuestLedger while signed out",
-      "Choose Sign in and complete the AppDeploy authentication popup as Actor A",
-      "Open the dashboard"
-    ],
-    "expected": "Actor A sees the private dashboard with Total money, Unallocated and Allocated figures."
+    "covers": ["authentication sign-in", "protected state access", "financial dashboard", "recurring obligations health"],
+    "description": "Verifies an authenticated player reaches the private dashboard and sees recurring obligations.",
+    "steps": ["Open QuestLedger while signed out", "Choose Sign in and complete authentication as Actor A", "Open the dashboard"],
+    "expected": "Actor A sees Total money, Unallocated, Quest allocations and Recurring Obligations."
   },
   {
-    "name": "Add money and allocate it to a quest",
+    "name": "Edit a quest and adjust its target without losing allocated money",
     "viewport": "desktop",
-    "covers": [
-      "unallocated money",
-      "money locations",
-      "allocation from unallocated",
-      "goal creation",
-      "database persistence"
-    ],
-    "description": "Verifies money enters the unallocated pool and allocation moves it into a quest without creating a separate bank balance.",
-    "steps": [
-      "Sign in as Actor A",
-      "Add KSh 20,000 and enter M-Pesa as the location",
-      "Create a Car Fund goal with target KSh 100,000",
-      "Allocate KSh 5,000 to Car Fund",
-      "Refresh the app"
-    ],
-    "expected": "The dashboard shows KSh 15,000 unallocated and Car Fund shows KSh 5,000 allocated after refresh."
+    "covers": ["quest editing", "quest target adjustment", "financial history preservation", "database persistence"],
+    "description": "Verifies metadata changes are separate from financial changes and a target increase retains the existing allocation.",
+    "setup": ["Sign in as Actor A", "Add KSh 30,000 to unallocated money", "Create a quest named Car Fund with a KSh 50,000 target", "Allocate KSh 20,000 to Car Fund"],
+    "steps": ["Open Car Fund detail", "Edit its name to Car Deposit", "Change the target to KSh 60,000", "Refresh the app and reopen the quest"],
+    "expected": "Car Deposit shows a KSh 60,000 target and the existing KSh 20,000 allocation remains intact."
   },
   {
-    "name": "Complete and spend a quest into Archives",
+    "name": "Archive a quest only after its allocation is explicitly reallocated",
     "viewport": "desktop",
-    "covers": [
-      "quest completion",
-      "spent state",
-      "partial/full spending",
-      "archive transition",
-      "event history"
-    ],
-    "description": "Verifies completing a funded goal does not remove its money and marking the remaining allocation spent archives the quest.",
-    "steps": [
-      "Create a goal named Laptop Fund with target KSh 5,000",
-      "Add KSh 5,000 to unallocated money",
-      "Allocate KSh 5,000 to Laptop Fund",
-      "Complete Laptop Fund",
-      "Open the quest detail",
-      "Mark KSh 5,000 as spent",
-      "Open Archives"
-    ],
-    "expected": "Laptop Fund can be completed while retaining its allocation, then becomes archived with KSh 5,000 spent and the activity history shows completion and spending."
+    "covers": ["quest archive", "explicit balance disposition", "archive history", "financial adjustment"],
+    "description": "Verifies archiving never silently destroys allocated money and the archived quest remains in history.",
+    "setup": ["Sign in as Actor A", "Add KSh 10,000", "Create Quest A with a KSh 10,000 target", "Allocate KSh 10,000 to Quest A", "Create Quest B with a KSh 20,000 target"],
+    "steps": ["Open Quest A detail", "Choose Archive", "Move the remaining KSh 10,000 to Quest B", "Confirm archive"],
+    "expected": "Quest A is archived, Quest B receives the KSh 10,000, and Quest A's history remains visible in Archives."
   },
   {
-    "name": "Create a recurring commitment and generate its current quest",
+    "name": "Edit and archive a commitment without erasing its history",
     "viewport": "mobile",
-    "covers": [
-      "recurring commitments",
-      "recurring quest instance",
-      "mobile responsive layout",
-      "commitment pause"
-    ],
-    "description": "Verifies a recurring rule creates an individual period quest and the recurring workflow remains usable on a phone.",
-    "steps": [
-      "Sign in as Actor A",
-      "Open Recurring",
-      "Create a monthly expense commitment named Rent for KSh 20,000",
-      "Return to the current commitments list",
-      "Open Quests"
-    ],
-    "expected": "Rent appears as a current individual quest with a period label, while the recurring commitment remains separately visible and can be paused."
+    "covers": ["commitment editing", "commitment archive", "next-cycle financial controls", "mobile responsive layout"],
+    "description": "Verifies commitment metadata can be edited while its reserved balance remains intact and an empty commitment can be archived.",
+    "setup": ["Sign in as Actor A", "Create a monthly commitment named Rent for KSh 20,000"],
+    "steps": ["Open Rent detail", "Edit its name to House Rent", "Save the edited commitment", "Open it again and choose Archive"],
+    "expected": "House Rent retains its commitment settings and is archived without deleting its activity history."
   },
   {
-    "name": "Reject overspending and preserve user data isolation",
+    "name": "Reject unsafe commitment archive and invalid financial changes",
     "viewport": "mobile",
-    "covers": [
-      "spending validation",
-      "insufficient unallocated validation",
-      "multi-user authorization boundary",
-      "mobile forms"
-    ],
-    "description": "Verifies financial guardrails prevent invalid allocations or spending and another user cannot see the first user's private quests.",
-    "steps": [
-      "Actor A signs in and creates a goal with a KSh 5,000 allocation",
-      "Attempt to mark KSh 6,000 as spent",
-      "Actor A signs out",
-      "Actor B signs in with a different account",
-      "Open Quests"
-    ],
-    "expected": "The overspending action is rejected without changing the balance, and Actor B does not see Actor A's private quest."
+    "covers": ["archive guardrail", "commitment balance protection", "target validation", "mobile forms"],
+    "description": "Verifies a funded commitment cannot be archived while holding money and invalid target values are rejected.",
+    "setup": ["Sign in as Actor A", "Add KSh 10,000", "Create a monthly commitment named Loan for KSh 5,000", "Top up Loan by KSh 5,000"],
+    "steps": ["Open Loan detail and choose Archive", "Observe that archiving is blocked because reserved money remains", "Open a quest target adjustment and enter a non-positive target"],
+    "expected": "The funded commitment remains active and the invalid quest target cannot be saved."
   }
 ]
