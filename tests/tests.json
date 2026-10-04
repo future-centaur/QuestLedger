@@ -1,47 +1,135 @@
 [
   {
+    "name": "Create a recurring commitment with a valid schedule",
+    "viewport": "mobile",
+    "covers": [
+      "recurring commitment creation",
+      "schedule validation",
+      "commitment persistence",
+      "creation history"
+    ],
+    "description": "Verifies the recurring commitment form creates a durable commitment with its schedule and initial zero reserved balance.",
+    "setup": [
+      "Sign in as Actor A"
+    ],
+    "steps": [
+      "Open Recurring",
+      "Create a monthly commitment named Rent for KSh 20,000 due on day 1",
+      "Refresh the app"
+    ],
+    "expected": "Rent appears as an active recurring commitment with KSh 20,000 recurring amount and KSh 0 reserved balance."
+  },
+  {
     "name": "Sign in and reach the funded recurring workspace",
     "sanity": true,
     "viewport": "desktop",
-    "covers": ["authentication sign-in", "protected state access", "financial dashboard", "recurring obligations health"],
+    "covers": [
+      "authentication sign-in",
+      "protected state access",
+      "financial dashboard",
+      "recurring obligations health"
+    ],
     "description": "Verifies an authenticated player reaches the private dashboard and sees recurring obligations.",
-    "steps": ["Open QuestLedger while signed out", "Choose Sign in and complete authentication as Actor A", "Open the dashboard"],
+    "steps": [
+      "Open QuestLedger while signed out",
+      "Choose Sign in and complete authentication as Actor A",
+      "Open the dashboard"
+    ],
     "expected": "Actor A sees Total money, Unallocated, Quest allocations and Recurring Obligations."
   },
   {
     "name": "Edit a quest and adjust its target without losing allocated money",
     "viewport": "desktop",
-    "covers": ["quest editing", "quest target adjustment", "financial history preservation", "database persistence"],
+    "covers": [
+      "quest editing",
+      "quest target adjustment",
+      "financial history preservation",
+      "database persistence"
+    ],
     "description": "Verifies metadata changes are separate from financial changes and a target increase retains the existing allocation.",
-    "setup": ["Sign in as Actor A", "Add KSh 30,000 to unallocated money", "Create a quest named Car Fund with a KSh 50,000 target", "Allocate KSh 20,000 to Car Fund"],
-    "steps": ["Open Car Fund detail", "Edit its name to Car Deposit", "Change the target to KSh 60,000", "Refresh the app and reopen the quest"],
+    "setup": [
+      "Sign in as Actor A",
+      "Add KSh 30,000 to unallocated money",
+      "Create a quest named Car Fund with a KSh 50,000 target",
+      "Allocate KSh 20,000 to Car Fund"
+    ],
+    "steps": [
+      "Open Car Fund detail",
+      "Edit its name to Car Deposit",
+      "Change the target to KSh 60,000",
+      "Refresh the app and reopen the quest"
+    ],
     "expected": "Car Deposit shows a KSh 60,000 target and the existing KSh 20,000 allocation remains intact."
   },
   {
     "name": "Archive a quest only after its allocation is explicitly reallocated",
     "viewport": "desktop",
-    "covers": ["quest archive", "explicit balance disposition", "archive history", "financial adjustment"],
+    "covers": [
+      "quest archive",
+      "explicit balance disposition",
+      "archive history",
+      "financial adjustment"
+    ],
     "description": "Verifies archiving never silently destroys allocated money and the archived quest remains in history.",
-    "setup": ["Sign in as Actor A", "Add KSh 10,000", "Create Quest A with a KSh 10,000 target", "Allocate KSh 10,000 to Quest A", "Create Quest B with a KSh 20,000 target"],
-    "steps": ["Open Quest A detail", "Choose Archive", "Move the remaining KSh 10,000 to Quest B", "Confirm archive"],
+    "setup": [
+      "Sign in as Actor A",
+      "Add KSh 10,000",
+      "Create Quest A with a KSh 10,000 target",
+      "Allocate KSh 10,000 to Quest A",
+      "Create Quest B with a KSh 20,000 target"
+    ],
+    "steps": [
+      "Open Quest A detail",
+      "Choose Archive",
+      "Move the remaining KSh 10,000 to Quest B",
+      "Confirm archive"
+    ],
     "expected": "Quest A is archived, Quest B receives the KSh 10,000, and Quest A's history remains visible in Archives."
   },
   {
     "name": "Edit and archive a commitment without erasing its history",
     "viewport": "mobile",
-    "covers": ["commitment editing", "commitment archive", "next-cycle financial controls", "mobile responsive layout"],
+    "covers": [
+      "commitment editing",
+      "commitment archive",
+      "next-cycle financial controls",
+      "mobile responsive layout"
+    ],
     "description": "Verifies commitment metadata can be edited while its reserved balance remains intact and an empty commitment can be archived.",
-    "setup": ["Sign in as Actor A", "Create a monthly commitment named Rent for KSh 20,000"],
-    "steps": ["Open Rent detail", "Edit its name to House Rent", "Save the edited commitment", "Open it again and choose Archive"],
+    "setup": [
+      "Sign in as Actor A",
+      "Add KSh 10,000",
+      "Create a monthly commitment named Rent for KSh 20,000"
+    ],
+    "steps": [
+      "Open Rent detail",
+      "Edit its name to House Rent",
+      "Save the edited commitment",
+      "Open it again and choose Archive"
+    ],
     "expected": "House Rent retains its commitment settings and is archived without deleting its activity history."
   },
   {
     "name": "Reject unsafe commitment archive and invalid financial changes",
     "viewport": "mobile",
-    "covers": ["archive guardrail", "commitment balance protection", "target validation", "mobile forms"],
+    "covers": [
+      "archive guardrail",
+      "commitment balance protection",
+      "target validation",
+      "mobile forms"
+    ],
     "description": "Verifies a funded commitment cannot be archived while holding money and invalid target values are rejected.",
-    "setup": ["Sign in as Actor A", "Add KSh 10,000", "Create a monthly commitment named Loan for KSh 5,000", "Top up Loan by KSh 5,000"],
-    "steps": ["Open Loan detail and choose Archive", "Observe that archiving is blocked because reserved money remains", "Open a quest target adjustment and enter a non-positive target"],
+    "setup": [
+      "Sign in as Actor A",
+      "Add KSh 10,000",
+      "Create a monthly commitment named Loan for KSh 5,000",
+      "Top up Loan by KSh 5,000"
+    ],
+    "steps": [
+      "Open Loan detail and choose Archive",
+      "Observe that archiving is blocked because reserved money remains",
+      "Open a quest target adjustment and enter a non-positive target"
+    ],
     "expected": "The funded commitment remains active and the invalid quest target cannot be saved."
   }
 ]
