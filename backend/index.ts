@@ -293,6 +293,32 @@ export const handler = router({
     if (!id) return error('Allocation was not recorded', 500);
     await xp(u, 5); return json({ ok: true });
   }),
+  'POST /api/commitments': P(async c => {
+    const x = c.body as any; const u = c.user!.userId; const n = Number(x.amount);
+    const frequency = String(x.frequency || '');
+    const dueDay = Number(x.dueDay || 1);
+    if (!x.name || n <= 0 || !validFrequency(frequency) || !x.bucket) return error('Missing required commitment fields', 400);
+    if ((frequency === 'monthly' || frequency === 'yearly') && (dueDay < 1 || dueDay > 31)) return error('Due day must be between 1 and 31', 400);
+    const kind = x.kind === 'goal' ? 'goal' : 'expense';
+    const record = {
+      name: x.name,
+      amount: n,
+      frequency,
+      dueDay: frequency === 'monthly' || frequency === 'yearly' ? dueDay : undefined,
+      kind,
+      bucket: x.bucket,
+      account: x.account || '',
+      active: true,
+      balance: 0,
+      nextDueAt: nextDueAt({ name: x.name, amount: n, frequency, dueDay, kind, bucket: x.bucket, account: x.account || '', active: true, ownerUserId: u }),
+      fundingMigrated: true,
+      ownerUserId: u
+    };
+    const [id] = await db.add('commitments', [record]);
+    if (!id) return error('Could not create commitment', 500);
+    await event(u, { type: 'commitment_created', commitmentId: id, amount: n, createdAt: new Date().toISOString() });
+    return json({ id });
+  }),
   'POST /api/commitments/topup': P(async c => {
     const x = c.body as any; const u = c.user!.userId; const n = Number(x.amount);
     if (!x.id || n <= 0) return error('Enter a positive top-up amount', 400);
@@ -365,7 +391,7 @@ export const handler = router({
   'POST /api/commitments/update': P(async c => {
     const x = c.body as any; const u = c.user!.userId; const cmt = await getCommitment(u, x.id);
     if (!cmt || (cmt as any).archived) return error('Commitment cannot be edited', 400);
-    if (!x.name || !x.bucket || !validFrequency(x.frequency)) return error('Name, bucket and frequency are required', 400);
+    if (!x.name || !x.bucket) return error('Name and bucket are required', 400);
     const record = { ...cmt, name: x.name, bucket: x.bucket, account: x.account || '', kind: x.kind === 'goal' ? 'goal' : 'expense' };
     await db.update('commitments', [{ id: cmt.id, record }]);
     await event(u, { type: 'commitment_updated', commitmentId: cmt.id, amount: 0, reason: 'Commitment details updated', createdAt: new Date().toISOString() });
