@@ -14,7 +14,7 @@ All coupling is carried by **three import lines**.
 
 | Location | Import | Surface area |
 | --- | --- | --- |
-| `src/App.tsx:2` | `{ api, auth } from '@appdeploy/client'` | 4 call sites |
+| `src/App.tsx:2` | `{ api, auth } from '@appdeploy/client'` | 4 call sites — **now `src/client.platform.ts`, 1 import** (`aa292fb`) |
 | `backend/index.ts:1` | `{ router, json, error, db, requireAuth } from '@appdeploy/sdk'` | 70 call sites |
 | `backend/realtime-subscribers.ts:1` | `{ db, ws, json, error } from '@appdeploy/sdk'` | dead code |
 
@@ -322,6 +322,8 @@ Run all six scenarios as a pre-migration baseline, then again post-migration. Gi
 
 ### 7.1 Introduce a provider interface rather than swapping the import
 
+> **Status: done in `82a7c0a`.** Landed as `src/client.ts` (interface), `src/client.platform.ts` (implementation), with `shared/types.ts` covering the second paragraph below. The `getUser()` signature gained a non-null `User` — the app treats a signed-out user as `null` at the call site, so the type is about the resolved case. See `handoff.md` §10.
+
 **Recommendation: define a thin `QuestLedgerClient` interface, implement it with the current AppDeploy SDK today, and swap the implementation for HTTP later.**
 
 The frontend touches the SDK in exactly four places, so a direct swap is about fifteen lines and looks like the simpler option. It is not simpler in the way that matters: it couples the domain to one backend's auth and transport, so the next migration costs the same again. The brief's stated goal — "deployable on multiple hosting platforms" — requires the seam.
@@ -338,11 +340,13 @@ interface QuestLedgerClient {
 }
 ```
 
-`App.tsx` imports the interface. The AppDeploy implementation lives behind it.
+`App.tsx` imports the interface. The AppDeploy implementation lives behind it — in `src/client.platform.ts`, which is named for the shape of the implementation rather than the vendor, so the product surface carries no platform name and step 7 needs no further rename.
 
 **Related: consolidate the duplicated types.** `Goal`, `Commitment`, `Event`, and `State` are declared structurally in both `src/App.tsx:5-10` and `backend/index.ts:3-19`. Structural duplication across a trust boundary is precisely the drift risk a decoupling should remove. Move them to a shared `types/` package imported by both sides.
 
 ### 7.2 Split `goals` into `goals` and `commitment_periods`
+
+> **Status: deferred by decision, not rejected.** `Goal` is now a discriminated union (`StandaloneQuest | CommitmentPeriod`) in `shared/types.ts`, so the split is a schema migration rather than a refactor across ~20 guard sites. See `handoff.md` §6, D1.
 
 **Recommendation: split.** Polymorphic tables force the `if (g.commitmentId)` guard to appear 11 times and make `periodKey` unenforceable by the database. Splitting gives:
 
@@ -359,9 +363,9 @@ Each step is independently shippable. The interface lands before the database, s
 
 | # | Step | Outcome |
 | --- | --- | --- |
-| 1 | Delete `backend/realtime*.ts` | Removes 138 lines of dead code and an unwanted table |
-| 2 | Extract shared `types/` package | Eliminates cross-boundary type duplication |
-| 3 | Define `QuestLedgerClient`; wrap current SDK | **No behaviour change** — seam established |
+| 1 | Delete `backend/realtime*.ts` | Removes 138 lines of dead code and an unwanted table — **pending confirmation** |
+| 2 | Extract shared `types/` package | Eliminates cross-boundary type duplication — **done** (`82a7c0a`) |
+| 3 | Define `QuestLedgerClient`; wrap current SDK | **No behaviour change** — seam established — **done** (`82a7c0a`) |
 | 4 | Postgres schema: constraints, FKs, `NUMERIC` money, split period table | Fixes §3.1–3.5 |
 | 5 | Transactional backend behind the same interface | Fixes §5 Tier 1 and Tier 3 |
 | 6 | Reconciliation migration for data and event history | Preserves history per §6 |
@@ -369,6 +373,8 @@ Each step is independently shippable. The interface lands before the database, s
 | 8 | Delete the AppDeploy backend | Decoupling complete |
 
 Steps 1–3 are low-risk and independently valuable. They can proceed while the migration design is still open.
+
+**Correction to that advice.** It said steps 1–3 could proceed *while the design is open*. Steps 2 and 3 were done, but step 1 was not: deleting `backend/realtime*.ts` requires knowing whether the platform auto-discovers named exports the way `cron.json` resolves `processCommitments` by name string. See `handoff.md` §3 and §4.
 
 ### 7.4 Move money arithmetic into SQL
 

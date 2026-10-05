@@ -44,10 +44,14 @@ This distinction is enforced by `if (g.commitmentId)` guards appearing **11 time
 ### Architecture as deployed
 
 ```
-React + Vite  →  @appdeploy/client (auth, api)  →  AppDeploy API  →  AppDeploy DB
+React + Vite  →  QuestLedgerClient  →  platform SDK (auth, api, db)  →  platform API  →  platform DB
+                      ▲
+              src/client.platform.ts  — one file; step 7 replaces it
                                                         ↓
                                               cron.json: processCommitments (*/5 min, Africa/Nairobi)
 ```
+
+The vendor is named in `docs/APPDEPLOY_DECOUPLING_BRIEF.md` and throughout `DECOUPLING_AUDIT.md`, because those record *why* this coupling exists. It is deliberately absent from the product surface — `src/` and `README.md` refer to "the platform", since `src/client.platform.ts` makes that true.
 
 Three entry points, not one:
 
@@ -64,7 +68,7 @@ QuestLedger/
 ├── src/
 │   ├── App.tsx                 every component in one file; imports the client *interface*
 │   ├── client.ts               QuestLedgerClient + error helpers — no platform import
-│   ├── client.appdeploy.ts     the only file importing @appdeploy/client
+│   ├── client.platform.ts      the only file importing the platform client
 │   ├── main.tsx
 │   └── index.css               hand-written CSS, dense
 ├── shared/
@@ -78,7 +82,7 @@ QuestLedger/
 ├── sdk-shim.d.ts        ambient decls for the unvendored SDK — not shipped
 ├── check-types.sh       local typecheck; the only runnable check in the repo
 ├── check-union.ts       proves the Goal union narrows at the money call sites
-├── appdeploy.auth-login.json  platform config: OAuth methods + theme
+├── <platform>.auth-login.json  platform config: OAuth methods + theme
 └── cron.json            platform config: schedule
 ```
 
@@ -123,7 +127,11 @@ The decisive question is whether `@appdeploy/sdk` exposes any transaction primit
 - **No** → B1 is moot. No route can be made atomic on this platform, and the migration is forced regardless of the `:357` answer. Record it and stop.
 - **Yes** → the atomicity question becomes cheap, and the correct near-term fix is available *before* Postgres.
 
-The SDK contract isn't visible from this repo — it is unvendored and absent from `package.json`. Confirm against AppDeploy SDK documentation.
+The SDK contract isn't visible from this repo — it is unvendored and absent from `package.json`. Confirm against the platform's SDK documentation.
+
+**Evidence gathered 2026-10-05 (`aa292fb`) — leans "no", not settled.** `backend/realtime-subscribers.ts` is the only other file that ever imported the SDK, and it exercises a *wider* surface than the live backend: `db.delete` and `ws.send`. Neither appears anywhere. A developer reaching for realtime fan-out — the feature most likely to have been built on transactions or a raw query — used neither. Combined with the fact that no route in 441 lines of money-moving code uses a transaction, **nothing in this repository suggests a transaction primitive exists.**
+
+That is evidence from *absence*, and the file in question is dead code, so it is weaker than a positive confirmation. It is enough to stop treating B1 as a blocker on *planning*: plan for the "no" branch and let the SDK docs confirm it before cutover. It is not enough to skip asking.
 
 ### B2. The list caps bound correctness guards, not just reads
 
@@ -160,10 +168,10 @@ The full sequence is in [`DECOUPLING_AUDIT.md` §7.3](./DECOUPLING_AUDIT.md#73-s
 
 ### Step 3 — Introduce the provider interface — **DONE (`82a7c0a`)**
 
-`src/client.ts` holds the interface; `src/client.appdeploy.ts` is the only file importing `@appdeploy/client`. `App.tsx` names the interface, so step 7 swaps one line:
+`src/client.ts` holds the interface; `src/client.platform.ts` is the only file importing the platform's client package. `App.tsx` names the interface, so step 7 swaps one line:
 
 ```ts
-const client: QuestLedgerClient = new AppDeployClient();
+const client: QuestLedgerClient = new PlatformClient();
 ```
 
 The coupling was **four call sites** (`App.tsx:22-27`), so this was small. It was done *before* the database work rather than as a direct import swap, so the domain is not coupled to one backend's transport.
@@ -189,7 +197,7 @@ What must survive:
 - **Event history.** Roughly 20 event types, and it is the *only* source for derived stats — `getState:151-156` re-counts the ledger on every read. Losing it silently resets three character stats.
 - **Balances imported as-is, never re-derived.** Import `profile.unallocated`, `goals.saved`, `commitments.balance` verbatim, then reconcile: `unallocated + Σ saved + Σ balance == Σ events where type = 'money_added'`. Investigate any discrepancy *before* cutover.
 - **`periodKey` verbatim.** It's the idempotency key — `reason === 'period:' + key` (`:185`) is the only thing preventing double deduction. Re-deriving it from a date can silently collide.
-- **Identity.** `ownerUserId` holds AppDeploy ids that won't survive; map via email (`auth.getUser()` returns it).
+- **Identity.** `ownerUserId` holds platform user ids that won't survive; map via email (`auth.getUser()` returns it).
 - **Event ordering.** `createdAt` with a tiebreaker for equal timestamps.
 
 **Cutover can be read-only.** The client holds no cache and refetches everything after every write, so a maintenance window is sufficient. Run all six `tests/tests.json` scenarios as a pre-migration baseline, then again after.
@@ -239,8 +247,8 @@ Doing it in JavaScript reintroduces the lost-update race *inside* the transactio
 
 ## 7. Things that will trip you up
 
-- **The repo is a mirror, not the source of truth.** Every commit is `Sync QuestLedger from AppDeploy`. **AppDeploy is authoritative; GitHub is downstream.** So there is no CI, no lockfile, no `.env.example`, and no reviewable change history — only snapshots. If you change code here, it does not affect production until it syncs back from the platform.
-- **`npm run dev` fails.** `@appdeploy/client` and `@appdeploy/sdk` are **not in `package.json`** — the platform supplies them. README acknowledges this. There's no lockfile either.
+- **The repo is a mirror, not the source of truth.** Every commit up to `a5d48d4` is a `Sync … from AppDeploy` snapshot. **The platform is authoritative; GitHub is downstream.** So there is no CI, no lockfile, no `.env.example`, and no reviewable change history — only snapshots. If you change code here, it does not affect production until it syncs back from the platform.
+- **`npm run dev` fails.** The platform's client and backend SDK packages are **not in `package.json`** — the host supplies them. README acknowledges this. There's no lockfile either.
 - **`tsconfig.json` has `"include": ["src"]`.** `tsc --noEmit` **never checks `backend/`** — including the domain type definitions. Step 2 (`82a7c0a`) worked around this with `sdk-shim.d.ts` and `check-types.sh` rather than editing `include`, because widening it surfaces a wall of errors while the SDK is unresolvable. **The backend is clean under `--strict` when checked that way, but nothing runs it automatically** — run `check-types.sh` by hand after touching `backend/` or `shared/`.
 - **No lint, no unit tests, no CI, no Dockerfile.** `tests/tests.json` is declarative JSON read by a platform-run agent — **not executable locally.**
 - **`GET /api/state` performs writes on every call.** `getState()` → `defaults()` + `migrateCommitments()` + `ensureInstances()`, up to 6 writes. Because the client refetches after every mutation, every write is followed by a read that writes. Make GET read-only before trusting anything else.
@@ -280,8 +288,8 @@ Plus a baseline that should run before any migration: all **six** `tests/tests.j
 | File | Role |
 | --- | --- |
 | `shared/types.ts` | `Goal = StandaloneQuest \| CommitmentPeriod` discriminated on `commitmentId`, with `?: undefined` on the standalone branch so narrowing actually works. Plus `Profile`, `Commitment` (with `archived`), `Account`, `Bucket`, `State`, `User`, `Event`, `EventType`, `New*` write variants. |
-| `src/client.ts` | `QuestLedgerClient`, `ApiErrorShape`, `errorMessage()`, `authErrorCopy()`. |
-| `src/client.appdeploy.ts` | The **only** file importing `@appdeploy/client`. |
+| `src/client.ts` | `QuestLedgerClient`, `ApiErrorShape`, `errorMessage()`, `authErrorCopy()`. Names no vendor. |
+| `src/client.platform.ts` | The **only** file importing the platform client. Renamed from `client.appdeploy.ts` in `aa292fb`. |
 | `sdk-shim.d.ts` | Ambient decls for the unvendored SDK. Not shipped; exists so the backend can be typechecked at all. |
 | `check-types.sh` | Runs the checks below. |
 | `check-union.ts` | Proves the union narrows at the 5 money-critical call sites. |
