@@ -5,7 +5,7 @@
 - **Date:** 2026-10-05
 - **Branch:** `appdeploy-decoupling`
 - **Working tree:** clean
-- **Unpushed:** none — `origin/appdeploy-decoupling` is at `9edacc6`
+- **Unpushed:** **2** — `4c3c07b` (doc corrections) and `82a7c0a` (steps 2–3). `origin/appdeploy-decoupling` is at `9edacc6`
 - **`main` / `origin/main`:** `a5d48d4`
 
 ---
@@ -62,15 +62,22 @@ Three entry points, not one:
 ```
 QuestLedger/
 ├── src/
-│   ├── App.tsx          131 lines — every component in one file
-│   ├── main.tsx         10 lines
-│   └── index.css        32 lines — hand-written CSS, dense
+│   ├── App.tsx                 every component in one file; imports the client *interface*
+│   ├── client.ts               QuestLedgerClient + error helpers — no platform import
+│   ├── client.appdeploy.ts     the only file importing @appdeploy/client
+│   ├── main.tsx
+│   └── index.css               hand-written CSS, dense
+├── shared/
+│   └── types.ts                shared by src/ and backend/; discriminated Goal union
 ├── backend/
-│   ├── index.ts         441 lines — types + domain + all 21 routes
-│   ├── realtime.ts        21 lines — DEAD CODE
-│   └── realtime-subscribers.ts  117 lines — DEAD CODE
+│   ├── index.ts                domain + all 21 routes
+│   ├── realtime.ts               21 lines — DEAD CODE, step 1
+│   └── realtime-subscribers.ts 117 lines — DEAD CODE, step 1
 ├── tests/tests.json     6 declarative E2E scenarios (not executable here)
-├── docs/                brief + audit + this file
+├── docs/                brief + audit + probe + this file
+├── sdk-shim.d.ts        ambient decls for the unvendored SDK — not shipped
+├── check-types.sh       local typecheck; the only runnable check in the repo
+├── check-union.ts       proves the Goal union narrows at the money call sites
 ├── appdeploy.auth-login.json  platform config: OAuth methods + theme
 └── cron.json            platform config: schedule
 ```
@@ -141,37 +148,27 @@ The full sequence is in [`DECOUPLING_AUDIT.md` §7.3](./DECOUPLING_AUDIT.md#73-s
 
 > **Status note (2026-10-05).** This section previously said steps 1–3 were "ready to start now." They are still low-risk and independently valuable, but **B2 is now understood to bound money-correctness guards**, not just dashboard reads. Refactoring on an unverified foundation risks encoding the current assumptions. The agreed order is: **establish B1/B2 first** (probe in [`PROBE_B2_COUNTS.md`](./PROBE_B2_COUNTS.md)), then land steps 1–3, which do not depend on either answer.
 
-### Step 1 — Delete `backend/realtime*.ts`
+### Step 1 — Delete `backend/realtime*.ts` — **NOT DONE, awaiting confirmation**
 
-138 lines of dead code. `realtimeSubscriptionRoutes` is never imported by `backend/index.ts`; nothing in `src/` subscribes. The frontend refetches after every mutation instead. The two routes it defines are not even registered in the `router({...})` block.
+138 lines of dead code, verified zero inbound references, and its two routes aren't even registered in the `router({...})` block.
 
-One check before deleting: `cron.json` resolves `processCommitments` by **name string**, so confirm the platform does not auto-discover named exports in the same way — otherwise a deleted file could be silently load-bearing.
+**Deliberately not done.** `cron.json` resolves `processCommitments` by *name string*, so before deleting anything from `backend/` confirm the platform does not auto-discover named exports the same way. A deleted file could be silently load-bearing. This needs a human answer — an automated delete was correctly refused for exactly this reason.
 
-### Step 2 — Extract shared types
+### Step 2 — Extract shared types — **DONE (`82a7c0a`)**
 
-`Goal`, `Commitment`, `Event`, `State` are declared structurally in **both** `src/App.tsx:5-10` and `backend/index.ts:3-19`. Create a shared `types/` package imported by both sides. Structural duplication across the trust boundary is exactly the drift risk the decoupling exists to remove.
+`shared/types.ts`, imported by both sides. See §10 for what landed and what it found.
 
-**The drift has already happened.** `Account`, `Bucket`, `State` and the `recurringHealth` shape exist *only* in `App.tsx`; the backend has no `Profile` or `State` type at all and reaches profile through `as any` at 11 sites. Backend's `Goal.account` is optional where the frontend's is required. Backend's `Commitment` omits `archived`, which it nonetheless writes at `:404`. The shared module must be the union of both, not a copy of either.
+### Step 3 — Introduce the provider interface — **DONE (`82a7c0a`)**
 
-Emit the discriminated union from D1 so the eventual split is a schema change. Import by **relative path** — there is no `baseUrl`/`paths` alias in `tsconfig.json` and no `resolve.alias` in `vite.config.ts`.
-
-### Step 3 — Introduce the provider interface
-
-**No behaviour change.** Define `QuestLedgerClient` and implement it over the current SDK; `App.tsx` imports the interface rather than `@appdeploy/client`.
+`src/client.ts` holds the interface; `src/client.appdeploy.ts` is the only file importing `@appdeploy/client`. `App.tsx` names the interface, so step 7 swaps one line:
 
 ```ts
-interface QuestLedgerClient {
-  getUser(): Promise<User | null>;
-  signIn(): Promise<{ user: User }>;
-  signOut(): Promise<void>;
-  get<T>(path: string): Promise<{ data: T }>;
-  post<T>(path: string, body: unknown): Promise<{ data: T }>;
-}
+const client: QuestLedgerClient = new AppDeployClient();
 ```
 
-The coupling is **four call sites** (`App.tsx:22-27`), so this is small. Do it before the database work rather than swapping the import directly — a direct swap couples the domain to one backend's transport, so the next migration costs the same again.
+The coupling was **four call sites** (`App.tsx:22-27`), so this was small. It was done *before* the database work rather than as a direct import swap, so the domain is not coupled to one backend's transport.
 
-Two contract details the interface must preserve: `mutate()` reads `e.response.data.message || e.response.data.error` (`App.tsx:27`), and `signIn` branches on the untyped codes `popup_blocked` / `popup_closed`.
+Two contract details the interface preserves, via the exported helpers `errorMessage()` and `authErrorCopy()`: `mutate()` reads `e.response.data.message || e.response.data.error`, and `signIn` branches on the untyped codes `popup_blocked` / `popup_closed`.
 
 **Neither branch is verifiable from this repo** — the SDK is unvendored, so we cannot confirm which key the error body actually carries. If it emits **neither**, then every server-side validation message is *already* being silently replaced by the generic `"Nothing was changed. Please try again."` today, including the money guardrails. Confirm against the SDK docs while resolving B1.
 
@@ -244,7 +241,7 @@ Doing it in JavaScript reintroduces the lost-update race *inside* the transactio
 
 - **The repo is a mirror, not the source of truth.** Every commit is `Sync QuestLedger from AppDeploy`. **AppDeploy is authoritative; GitHub is downstream.** So there is no CI, no lockfile, no `.env.example`, and no reviewable change history — only snapshots. If you change code here, it does not affect production until it syncs back from the platform.
 - **`npm run dev` fails.** `@appdeploy/client` and `@appdeploy/sdk` are **not in `package.json`** — the platform supplies them. README acknowledges this. There's no lockfile either.
-- **`tsconfig.json` has `"include": ["src"]`.** `tsc --noEmit` **never checks `backend/`** — all 441 lines, including the domain type definitions, are unverified by the type system.
+- **`tsconfig.json` has `"include": ["src"]`.** `tsc --noEmit` **never checks `backend/`** — including the domain type definitions. Step 2 (`82a7c0a`) worked around this with `sdk-shim.d.ts` and `check-types.sh` rather than editing `include`, because widening it surfaces a wall of errors while the SDK is unresolvable. **The backend is clean under `--strict` when checked that way, but nothing runs it automatically** — run `check-types.sh` by hand after touching `backend/` or `shared/`.
 - **No lint, no unit tests, no CI, no Dockerfile.** `tests/tests.json` is declarative JSON read by a platform-run agent — **not executable locally.**
 - **`GET /api/state` performs writes on every call.** `getState()` → `defaults()` + `migrateCommitments()` + `ensureInstances()`, up to 6 writes. Because the client refetches after every mutation, every write is followed by a read that writes. Make GET read-only before trusting anything else.
 - **`claim()` (`:22`) must not be ported.** It lists all six tables **unfiltered** and assigns every row lacking `ownerUserId` to the calling user. In a multi-user world that's a cross-user data-assignment primitive. Currently benign only because the app predates auth — and it runs on every state read.
@@ -263,4 +260,45 @@ Doing it in JavaScript reintroduces the lost-update race *inside* the transactio
 | [`PROBE_B2_COUNTS.md`](./PROBE_B2_COUNTS.md) | The deployable probe that answers B2. **Unrun.** |
 | [`README.md`](../README.md) | Product model and the integrity stance. Corrected 2026-10-05: the user-isolation claim was overstated, and the QA section described five scenarios that don't match the six in `tests/tests.json`. |
 
-> **Corrections applied 2026-10-05.** Seven doc errors were found by reading the code against the text and fixed in place: the audit's reconciliation formula omitted the `!commitmentId` filter (manufacturing false discrepancies); its `commitments` schema omitted `archived` (which would make archived commitments editable again); it attributed the XP level formula to `xp()`, which has no level logic; it specified API paging the SDK cannot perform; the README overstated user isolation and misdescribed the test suite; and this file's branch/unpushed metadata and decision count were stale.
+> **Corrections applied 2026-10-05** (`4c3c07b`). Seven doc errors were found by reading the code against the text and fixed in place: the audit's reconciliation formula omitted the `!commitmentId` filter (manufacturing false discrepancies); its `commitments` schema omitted `archived` (which would make archived commitments editable again); it attributed the XP level formula to `xp()`, which has no level logic; it specified API paging the SDK cannot perform; the README overstated user isolation and misdescribed the test suite; and this file's branch/unpushed metadata and decision count were stale.
+
+---
+
+## 9. Still owed by the human
+
+Four things no amount of code reading in this repo can settle:
+
+1. **B1** — does `@appdeploy/sdk` expose a transaction primitive? Gates step 4.
+2. **B2** — run the probe in [`PROBE_B2_COUNTS.md`](./PROBE_B2_COUNTS.md), then **delete the route and redeploy**. Unrun.
+3. **Step 1** — confirm the platform doesn't auto-discover named exports before deleting `backend/realtime*.ts`.
+4. **The two unverified contracts** — does the SDK's error body carry `message` or `error`? Do `popup_blocked` / `popup_closed` actually occur?
+
+Plus a baseline that should run before any migration: all **six** `tests/tests.json` scenarios against the deployed build.
+
+## 10. What steps 2–3 landed (`82a7c0a`)
+
+| File | Role |
+| --- | --- |
+| `shared/types.ts` | `Goal = StandaloneQuest \| CommitmentPeriod` discriminated on `commitmentId`, with `?: undefined` on the standalone branch so narrowing actually works. Plus `Profile`, `Commitment` (with `archived`), `Account`, `Bucket`, `State`, `User`, `Event`, `EventType`, `New*` write variants. |
+| `src/client.ts` | `QuestLedgerClient`, `ApiErrorShape`, `errorMessage()`, `authErrorCopy()`. |
+| `src/client.appdeploy.ts` | The **only** file importing `@appdeploy/client`. |
+| `sdk-shim.d.ts` | Ambient decls for the unvendored SDK. Not shipped; exists so the backend can be typechecked at all. |
+| `check-types.sh` | Runs the checks below. |
+| `check-union.ts` | Proves the union narrows at the 5 money-critical call sites. |
+
+**Two real bugs surfaced while typing the backend:**
+
+- **`claim()` (`:22`) could silently update nothing.** It read `x.id` from a type declaring only `ownerUserId?`, so it would pass `id: undefined` to `db.update` — a no-op, not an error. Now declared `{ id?: string; ownerUserId?: string }` and guarded. This is the one *semantic* change in the commit; everything else is type-level.
+- **`event()` required an `id`** that no call site supplies (the platform assigns it). ~20 call sites would have failed. Now `Omit<Event, 'id' | 'ownerUserId'>`.
+
+**Verification — `check-types.sh`:**
+
+| Check | Result |
+| --- | --- |
+| `backend/index.ts` under `--strict` | **0 errors** — first time in the repo's history. `tsconfig.json` has `include: ["src"]`, so this never ran before. |
+| `shared/types.ts` + `src/client.ts` | 0 errors |
+| `check-union.ts` | 0 errors — `goalAllocated`, `totalMoney`, `activeGoals`, `archives`, and the `linked` period-rows expression all narrow correctly |
+| `src/App.tsx` | 0 errors attributable to these changes. All 896 remaining are TS7026/TS2307 `Cannot find module 'react'` and friends — no `node_modules`. |
+
+**No behaviour change.** Every money edit in the diff is `(p as any).unallocated` → `p.unallocated` — the cast removed, the arithmetic identical. All validation guard clauses and error message strings are untouched. **This has not been run against a deployed build yet** — the six `tests/tests.json` scenarios are the real gate.
+
