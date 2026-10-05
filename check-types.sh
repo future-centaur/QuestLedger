@@ -33,7 +33,7 @@ npx --yes -p typescript@5.7 tsc --noEmit --strict --skipLibCheck \
 echo "union exit=$?"
 
 echo
-echo "=== src/App.tsx (needs react + @appdeploy/client types; expect module-resolution errors) ==="
+echo "=== src/App.tsx (needs react + the platform client; expect module-resolution errors) ==="
 npx --yes -p typescript@5.7 tsc --noEmit --strict --skipLibCheck \
   --jsx react-jsx --module esnext --moduleResolution bundler --target es2020 \
   --noUnusedLocals --lib es2020,dom,dom.iterable src/App.tsx 2>&1 \
