@@ -93,7 +93,10 @@ The domain is portable and constitutes the majority of the backend file.
 
 **`event()`** (`:176`). Stamps `ownerUserId` centrally so callers cannot forget ownership.
 
-**`xp()`** (`:44`). Level is `Math.floor(xp / 500) + 1`.
+**`xp()`** (`:44`). A bare increment of `profile.xp` — nothing more. It contains **no
+level logic**; the level derivation `Math.max(1, Math.floor(xp / 500) + 1)` lives in
+the frontend at `App.tsx:28`. Port `xp()` as a single function and levels still work,
+because levels were never its job.
 
 **Validation guard-clauses.** The `if (!x || n <= 0) return error('...', 400)` idiom, message text included. These encode product rules and are what the tests assert against.
 
@@ -125,7 +128,12 @@ There are no migrations, no schema files, and no SQL. The schema exists only as 
 
 Dual-purpose. Either a standalone quest, or a **period instance** of a recurring commitment in which case it carries `commitmentId` + `periodKey` and holds no money — the balance lives on the commitment. This polymorphism is the subtlest part of the model and the one genuine schema problem; see below.
 
-**`commitments`** — `{ id, name, amount, frequency, dueDay?, kind, bucket, account?, active, balance?, nextDueAt?, pendingAmount?, pendingFrequency?, fundingMigrated, ownerUserId }`
+**`commitments`** — `{ id, name, amount, frequency, dueDay?, kind, bucket, account?, active, balance?, nextDueAt?, pendingAmount?, pendingFrequency?, fundingMigrated, archived?, ownerUserId }`
+
+> `archived` is written by `POST /api/commitments/archive` (`:404`) and read back at
+> `:393` to block edits, and the frontend filters on it. It is listed here because
+> omitting it from a schema built off this section makes archived commitments
+> **editable again** — a silent behaviour change.
 
 **`events`** — `{ id, type, amount, from?, to?, goalId?, commitmentId?, createdAt, reason?, location?, ownerUserId }` across roughly 20 event types. `reason` is overloaded: free text for humans, and idempotency key `'period:<key>'` for the cron.
 
@@ -241,11 +249,37 @@ Doing it in JavaScript reintroduces the lost-update race inside the transaction'
 
 ### No export tooling exists
 
-`db.list` is the only read path. There is no admin route, no script, and no bulk endpoint. Migration requires a one-off script that authenticates as each user and pages through all six tables.
+`db.list` is the only read path. There is no admin route, no script, and no bulk endpoint. Migration requires a one-off script that authenticates as each user and reads all six tables.
+
+**Paging is not available on this SDK.** `db.list` is `(table, { limit, filter })`
+with equality filters on top-level fields only — there is no cursor, offset, or
+sort parameter. So "pages through all six tables" is not achievable as written. The
+only workable API export is `filter: { ownerUserId }` with a raised per-user limit,
+which is precisely what the caps constrain. **This makes the row counts below a
+hard gate, not a formality:** if any per-user table exceeds its cap, the data is
+not reachable through the API at all and direct database access is the only route.
+
+See [`PROBE_B2_COUNTS.md`](./PROBE_B2_COUNTS.md) for a deployable probe that
+establishes real counts by escalating `limit` until a call returns fewer rows than
+requested — truncation is detectable even without a count API.
 
 ### Establish row counts before designing the export
 
 `goals` is read at `limit: 100` and `events` at `limit: 200`. **If live data exceeds those caps, it cannot be read in full through the current API**, and direct platform database access becomes necessary. Get real counts first — this determines whether the migration is an API scrape or a database export.
+
+**This is a live correctness problem, not only a display one.** The caps bound
+guards, not just reads:
+
+- `ensureInstances` (`:93`, goals cap 100) checks for an existing period row before
+  inserting. Past 100 rows it cannot see the row, so it inserts a **duplicate**
+  period for the same `(commitmentId, periodKey)`.
+- `deductCommitment` (`:184`, events cap 200) dedupes deductions the same way, so
+  **the idempotency guard against double deduction silently degrades** past 200.
+- `:201` (profiles cap 500) stops the cron outright past the 500th user — those
+  users' commitments are never deducted.
+
+Totals can look healthy while individual users are over cap, because the caps apply
+per user. The probe therefore reports per-user maxima, not just table totals.
 
 ### What must survive
 
@@ -254,8 +288,15 @@ Doing it in JavaScript reintroduces the lost-update race inside the transaction'
 **Balances must be imported as-is, not re-derived.** Import `profile.unallocated`, `goals.saved`, and `commitments.balance` verbatim, then reconcile against the ledger:
 
 ```
-unallocated + Σ goals.saved + Σ commitments.balance  ==  Σ events where type = 'money_added'
+unallocated + Σ goals.saved (standalone quests only) + Σ commitments.balance
+  ==  Σ events where type = 'money_added'
 ```
+
+The `standalone quests only` filter is load-bearing and must match `getState:145`,
+which sums `saved` over `!x.commitmentId`. Period instances hold no money — the
+balance lives on the commitment — so including them double-counts any instance
+with a non-zero `saved`. Summing `goals.saved` unfiltered produces a **false
+discrepancy** whenever commitment history exists.
 
 Any discrepancy is the interesting part and should be investigated before cutover, not after.
 

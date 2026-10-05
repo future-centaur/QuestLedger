@@ -3,9 +3,9 @@
 **Read this first, then read [`APPDEPLOY_DECOUPLING_BRIEF.md`](./APPDEPLOY_DECOUPLING_BRIEF.md) and [`DECOUPLING_AUDIT.md`](./DECOUPLING_AUDIT.md) in that order.** The brief says why the migration is happening. The audit says what the code actually is. This file says where things stand right now and what to do next.
 
 - **Date:** 2026-10-05
-- **Branch:** `docs/decoupling-audit`
+- **Branch:** `appdeploy-decoupling`
 - **Working tree:** clean
-- **Unpushed:** `7e31c4a` (the audit)
+- **Unpushed:** none — `origin/appdeploy-decoupling` is at `9edacc6`
 - **`main` / `origin/main`:** `a5d48d4`
 
 ---
@@ -107,33 +107,53 @@ These are deliberate. Match them when editing.
 
 Both need answers from outside the repository. Neither is a code-reading problem.
 
-### B1. Is `db.update` with multiple records atomic?
+### B1. Does the SDK expose a transaction primitive?
 
-`backend/index.ts:357` (`/api/commitments/rebalance`) passes two `{ id, record }` objects in a single call. If that isn't atomic, the route can **destroy money mid-transfer** — decrement one commitment, fail to increment the other.
+**Reframed from the original question.** The handoff previously asked whether `db.update` with multiple records (`backend/index.ts:357`, `/api/commitments/rebalance`) is atomic. That is the wrong question: `/api/contributions` writes `profile` at `:290` and the goal at `:291` in **two separate calls**, so per-call atomicity would not save it regardless. Most Tier 1 routes span two rows across two calls.
 
-The SDK contract isn't visible from this repo. Confirm against AppDeploy SDK documentation or by test. This is the highest-severity unknown in the codebase.
+The decisive question is whether `@appdeploy/sdk` exposes any transaction primitive at all (`transaction` / `begin` / `sql` / a raw-query export).
 
-### B2. The list caps are truncating in production right now
+- **No** → B1 is moot. No route can be made atomic on this platform, and the migration is forced regardless of the `:357` answer. Record it and stop.
+- **Yes** → the atomicity question becomes cheap, and the correct near-term fix is available *before* Postgres.
+
+The SDK contract isn't visible from this repo — it is unvendored and absent from `package.json`. Confirm against AppDeploy SDK documentation.
+
+### B2. The list caps bound correctness guards, not just reads
 
 `goals` reads at `limit: 100`, `events` at `limit: 200`, `profile` at `limit: 500` in the cron. `db.list` truncates **silently** — no error.
 
-Consequences already live: a user with >100 goals loses goals from their dashboard; the cron stops processing users past the 500th profile. **This is a live bug independent of the migration.** Get real production row counts — this also determines whether the data export can use the API at all or needs direct database access (see §5).
+**This is more severe than "the dashboard loses goals."** The caps bound guards that protect money:
+
+- `ensureInstances` (`:93`, goals cap 100) checks for an existing period row before inserting. Past 100 rows it cannot see the row, so it inserts a **duplicate** period for the same `(commitmentId, periodKey)`.
+- `deductCommitment` (`:184`, events cap 200) dedupes deductions the same way — **the idempotency guard against double deduction silently degrades**.
+- `:201` (profiles cap 500) stops the cron entirely past the 500th user; those commitments are never deducted.
+- `claim` (`:24`) also caps at 100, unfiltered, so it silently no-ops past 100 legacy rows.
+
+Whether this is *actively* losing data or merely latent is unknown and needs real counts. **Get them** — this also decides whether the export can use the API at all (see §5), because the SDK has no cursor or offset: `db.list` is `(table, { limit, filter })` with equality filters only, so "paging through" the tables is not possible as previously assumed.
+
+A deployable probe is in [`PROBE_B2_COUNTS.md`](./PROBE_B2_COUNTS.md). It reports per-user maxima, not just totals — totals can look healthy while individual users are over cap, because the caps apply per user.
 
 ---
 
 ## 4. Next steps
 
-The full sequence is in [`DECOUPLING_AUDIT.md` §7.3](./DECOUPLING_AUDIT.md#73-sequenced-plan). **Steps 1–3 are ready to start now** and need no answers from B1 or B2.
+The full sequence is in [`DECOUPLING_AUDIT.md` §7.3](./DECOUPLING_AUDIT.md#73-sequenced-plan).
+
+> **Status note (2026-10-05).** This section previously said steps 1–3 were "ready to start now." They are still low-risk and independently valuable, but **B2 is now understood to bound money-correctness guards**, not just dashboard reads. Refactoring on an unverified foundation risks encoding the current assumptions. The agreed order is: **establish B1/B2 first** (probe in [`PROBE_B2_COUNTS.md`](./PROBE_B2_COUNTS.md)), then land steps 1–3, which do not depend on either answer.
 
 ### Step 1 — Delete `backend/realtime*.ts`
 
-138 lines of dead code. `realtimeSubscriptionRoutes` is never imported by `backend/index.ts`; nothing in `src/` subscribes. The frontend refetches after every mutation instead.
+138 lines of dead code. `realtimeSubscriptionRoutes` is never imported by `backend/index.ts`; nothing in `src/` subscribes. The frontend refetches after every mutation instead. The two routes it defines are not even registered in the `router({...})` block.
 
-Also removes the `entity_subscriptions` table from the migration scope.
+One check before deleting: `cron.json` resolves `processCommitments` by **name string**, so confirm the platform does not auto-discover named exports in the same way — otherwise a deleted file could be silently load-bearing.
 
 ### Step 2 — Extract shared types
 
 `Goal`, `Commitment`, `Event`, `State` are declared structurally in **both** `src/App.tsx:5-10` and `backend/index.ts:3-19`. Create a shared `types/` package imported by both sides. Structural duplication across the trust boundary is exactly the drift risk the decoupling exists to remove.
+
+**The drift has already happened.** `Account`, `Bucket`, `State` and the `recurringHealth` shape exist *only* in `App.tsx`; the backend has no `Profile` or `State` type at all and reaches profile through `as any` at 11 sites. Backend's `Goal.account` is optional where the frontend's is required. Backend's `Commitment` omits `archived`, which it nonetheless writes at `:404`. The shared module must be the union of both, not a copy of either.
+
+Emit the discriminated union from D1 so the eventual split is a schema change. Import by **relative path** — there is no `baseUrl`/`paths` alias in `tsconfig.json` and no `resolve.alias` in `vite.config.ts`.
 
 ### Step 3 — Introduce the provider interface
 
@@ -152,6 +172,8 @@ interface QuestLedgerClient {
 The coupling is **four call sites** (`App.tsx:22-27`), so this is small. Do it before the database work rather than swapping the import directly — a direct swap couples the domain to one backend's transport, so the next migration costs the same again.
 
 Two contract details the interface must preserve: `mutate()` reads `e.response.data.message || e.response.data.error` (`App.tsx:27`), and `signIn` branches on the untyped codes `popup_blocked` / `popup_closed`.
+
+**Neither branch is verifiable from this repo** — the SDK is unvendored, so we cannot confirm which key the error body actually carries. If it emits **neither**, then every server-side validation message is *already* being silently replaced by the generic `"Nothing was changed. Please try again."` today, including the money guardrails. Confirm against the SDK docs while resolving B1.
 
 ### Steps 4+ — Blocked on B1, B2, and two decisions
 
@@ -179,10 +201,25 @@ What must survive:
 
 ## 6. Open decisions
 
-Four need a human answer before step 4.
+**Three need a human answer before step 4** (D1, D2, D3). This section previously said
+"four" while §4 said "two" — the discrepancy was that D4 is explicitly out of scope.
+D3 is effectively pre-empted by the audit and handoff, which both assert the
+arithmetic must move into SQL as a finding rather than an open question, so only
+**D1 and D2 are genuinely undecided.**
+
+A fifth question has surfaced during verification and is unaddressed anywhere in
+these docs:
+
+**D5. Supabase or bare Postgres?** The README names Supabase as the portability
+target; the brief and audit assume a self-managed Postgres with real FKs and
+`ON DELETE RESTRICT`. Supabase implies Row Level Security, which no document
+discusses — and RLS interacts directly with the `ownerUserId` → auth-subject-ID
+remapping in §5. This needs answering before step 4, not after.
 
 **D1. Split `goals`, or keep it polymorphic?**
 *Recommendation: split into `goals` + `commitment_periods`.* Kills the 11 `if (g.commitmentId)` guards, gives periods real columns, and makes `(commitment_id, period_key)` a database-enforced unique constraint — which is what makes cron deduction safe under concurrency rather than guarded in application code.
+
+**Decided 2026-10-05: defer to the Postgres move.** The guards are not removed now — they are *named*. Step 2 emits a discriminated union (`Goal = StandaloneGoal | CommitmentPeriodGoal`, with an `isPeriod()` guard) shared by both sides, so the split becomes a schema migration rather than a ~20-site refactor across two files. Note the guards exist on **both** sides: 11 in `backend/index.ts`, 9 more in `src/App.tsx`.
 
 **D2. How is money stored?**
 Currently JavaScript `number` (float64), formatted `KSh ${Math.round(n).toLocaleString()}`. **Money as float64 is not acceptable in a financial app.** Use `NUMERIC(14,2)` or integer minor units. This is a correctness change, not a port.
@@ -211,6 +248,8 @@ Doing it in JavaScript reintroduces the lost-update race *inside* the transactio
 - **No lint, no unit tests, no CI, no Dockerfile.** `tests/tests.json` is declarative JSON read by a platform-run agent — **not executable locally.**
 - **`GET /api/state` performs writes on every call.** `getState()` → `defaults()` + `migrateCommitments()` + `ensureInstances()`, up to 6 writes. Because the client refetches after every mutation, every write is followed by a read that writes. Make GET read-only before trusting anything else.
 - **`claim()` (`:22`) must not be ported.** It lists all six tables **unfiltered** and assigns every row lacking `ownerUserId` to the calling user. In a multi-user world that's a cross-user data-assignment primitive. Currently benign only because the app predates auth — and it runs on every state read.
+- **`Number(x) <= 0` does not reject `NaN`.** Nine routes guard amounts with this idiom, and `Number('abc')` is `NaN`, where `NaN <= 0` is `false` — so `POST /api/money` with `{"amount":"abc"}` writes `unallocated: NaN` and **permanently breaks the conservation invariant** for that user. Reachable by direct API call; the UI form happens to send `null`, which the guard does catch. Far more corrupting under integer minor units, where everything downstream assumes exactness.
+- **XP is not awarded uniformly.** `/api/commitments/rebalance` awards **0** XP while `/api/rebalance` (goal-to-goal) awards 10. A regression test written as "every money movement earns XP" will fail. The per-route table is in the audit.
 - **`migrateCommitments()` (`:106`) and `defaults()` (`:29`) are pre-auth migrations.** Postgres gets schema migrations instead.
 
 ---
@@ -220,5 +259,8 @@ Doing it in JavaScript reintroduces the lost-update race *inside* the transactio
 | Document | Read it for |
 | --- | --- |
 | [`APPDEPLOY_DECOUPLING_BRIEF.md`](./APPDEPLOY_DECOUPLING_BRIEF.md) | Why the migration. Target architecture, the `Validate → BEGIN → Lock → Update → Event → COMMIT` pattern, and the "decoupling not a rewrite" constraint. |
-| [`DECOUPLING_AUDIT.md`](./DECOUPLING_AUDIT.md) | The code as it actually is. All 21 API contracts, the six audit categories, the full 8-step sequence, and both blockers in detail. |
-| [`README.md`](../README.md) | Product model and the integrity stance. Note: its project tree is slightly stale (lists `tests/tests.txt`, actual file is `tests.json`; doesn't mention `docs/`). |
+| [`DECOUPLING_AUDIT.md`](./DECOUPLING_AUDIT.md) | The code as it actually is. All 20 API contracts, the six audit categories, the full 8-step sequence, and both blockers in detail. |
+| [`PROBE_B2_COUNTS.md`](./PROBE_B2_COUNTS.md) | The deployable probe that answers B2. **Unrun.** |
+| [`README.md`](../README.md) | Product model and the integrity stance. Corrected 2026-10-05: the user-isolation claim was overstated, and the QA section described five scenarios that don't match the six in `tests/tests.json`. |
+
+> **Corrections applied 2026-10-05.** Seven doc errors were found by reading the code against the text and fixed in place: the audit's reconciliation formula omitted the `!commitmentId` filter (manufacturing false discrepancies); its `commitments` schema omitted `archived` (which would make archived commitments editable again); it attributed the XP level formula to `xp()`, which has no level logic; it specified API paging the SDK cannot perform; the README overstated user isolation and misdescribed the test suite; and this file's branch/unpushed metadata and decision count were stale.

@@ -33,7 +33,17 @@ React + Vite
              └── user-scoped financial records
 ```
 
-Authentication and every financial API route are user-scoped so multiple users can safely share the application without sharing financial state.
+Authentication and every financial API route are user-scoped, so financial records
+are read and written against the signed-in user.
+
+> **Caveat — this is not yet a full isolation guarantee.** `claim()`
+> (`backend/index.ts:22`) lists all six tables **unfiltered** and assigns every row
+> lacking an `ownerUserId` to the calling user. It runs on every `GET /api/state`
+> via `defaults()` (`:127`). For rows that already carry an owner this is a no-op,
+> which is why it has gone unnoticed — but in a multi-user deployment it is a
+> cross-user data-assignment primitive. See
+> [`DECOUPLING_AUDIT.md` §5](./docs/DECOUPLING_AUDIT.md) and decision note `claim()`
+> in [`handoff.md`](./docs/handoff.md). It must not be carried into any new backend.
 
 ### Why AppDeploy?
 
@@ -69,7 +79,7 @@ QuestLedger/
 │   ├── realtime.ts
 │   └── realtime-subscribers.ts
 ├── tests/
-│   └── tests.txt
+│   └── tests.json
 ├── appdeploy.auth-login.json
 ├── index.html
 ├── package.json
@@ -84,7 +94,9 @@ QuestLedger/
 
 ## QA
 
-The current AppDeploy build has five core end-to-end workflows covering authentication, mobile responsiveness, goal creation/persistence, user isolation, and sign-out. Automated endpoint coverage is not exhaustive; the five user-facing workflows are the primary regression suite.
+The current AppDeploy build has six end-to-end scenarios in [`tests/tests.json`](./tests/tests.json): commitment creation with a valid schedule; sign-in and the funded recurring workspace; quest edit and target adjustment; quest archive with explicit reallocation; commitment edit and archive; and the archive guardrails. Automated endpoint coverage is not exhaustive; these six are the primary regression suite and should be run before any migration cutover.
+
+Coverage is thinner than the file count suggests. Only the archive-guardrail scenario is a negative test, and **none of the six covers** float precision or rounding, partial/underfunded deduction, `commitment_deduction` idempotency, the list-cap behaviour, or the cron `processCommitments` path at all — which is the entire `GET /api/state` bootstrap (`:22`–`:211`). Note also that these scenarios are declarative and **are not executable from this repository**; they are run by the platform's agent against a deployed build.
 
 ## Roadmap
 
