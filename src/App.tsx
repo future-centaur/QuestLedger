@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
-import { api, auth } from '@appdeploy/client';
+import { useEffect, useState } from 'react';
 import { Plus, Target, Wallet, Shield, Scale, ArrowRightLeft, Trophy, ChevronRight, X, LogIn, LogOut, Sparkles, Archive, Repeat2, Check, CircleDollarSign, CalendarDays, Pause, Play, MoreHorizontal } from 'lucide-react';
+import type { Goal, Commitment, Event, State, User } from '../shared/types';
+import type { QuestLedgerClient } from './client';
+import { errorMessage, authErrorCopy } from './client';
+import { AppDeployClient } from './client.appdeploy';
 
-type Goal = { id: string; name: string; target: number; saved: number; spent: number; bucket: string; account: string; deadline?: string; status: string; kind: 'goal' | 'expense'; commitmentId?: string; periodKey?: string; periodStatus?: string; archived?: boolean; };
-type Account = { id: string; name: string };
-type Bucket = { id: string; name: string };
-type Commitment = { id: string; name: string; amount: number; frequency: string; dueDay?: number; kind: 'goal' | 'expense'; bucket: string; account: string; active: boolean; balance?: number; nextDueAt?: string; pendingAmount?: number; pendingFrequency?: string; archived?: boolean; };
-type Event = { id: string; type: string; amount: number; from?: string; to?: string; goalId?: string; commitmentId?: string; createdAt: string; reason?: string; location?: string; fromName?: string; toName?: string; };
-type State = { goals: Goal[]; accounts: Account[]; buckets: Bucket[]; commitments: Commitment[]; events: Event[]; xp: number; unallocated: number; stats: Record<string, number>; recurringHealth?: { totalReserved: number; monthlyOutflow: number; activeCount: number } };
+// The only line that names an implementation. Step 7 swaps this for the HTTP
+// client; nothing else in this file changes.
+const client: QuestLedgerClient = new AppDeployClient();
+
 const empty: State = { goals: [], accounts: [], buckets: [], commitments: [], events: [], xp: 0, unallocated: 0, stats: { integrity: 100, discipline: 0, consistency: 0, balance: 50, power: 0, adaptability: 0 } };
 const money = (n: number) => `KSh ${Math.round(n).toLocaleString()}`;
 const dateText = (v?: string) => v ? new Date(v).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
@@ -16,15 +17,15 @@ const cyclesText = (c: Commitment) => { const amount = Number(c.amount || 0), ba
 const exhaustionText = (c: Commitment) => { const amount = Number(c.amount || 0), balance = Number(c.balance || 0); if (!c.nextDueAt || amount <= 0 || balance <= 0) return 'Needs funding'; const full = Math.floor(balance / amount); const d = new Date(c.nextDueAt); if (balance % amount === 0 && full > 0) d.setDate(d.getDate() + Math.max(0, full - 1) * (c.frequency === 'daily' ? 1 : c.frequency === 'weekly' ? 7 : c.frequency === 'monthly' ? 30 : 365)); return dateText(d.toISOString()); };
 
 export default function App() {
-  const [user, setUser] = useState<any>(null), [checking, setChecking] = useState(true), [state, setState] = useState(empty);
+  const [user, setUser] = useState<User>(null), [checking, setChecking] = useState(true), [state, setState] = useState(empty);
   const [tab, setTab] = useState('home'), [modal, setModal] = useState<string | null>(null), [form, setForm] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  useEffect(() => { auth.getUser().then(setUser).catch(() => setUser(null)).finally(() => setChecking(false)); }, []);
-  const login = async () => { setError(''); try { const r = await auth.signIn({ scope: 'openid email profile offline_access' }); setUser(r.user); } catch (e: any) { setError(e?.code === 'popup_blocked' ? 'Please allow popups to sign in.' : e?.code === 'popup_closed' ? 'Sign-in was cancelled.' : 'Could not sign in.'); } };
-  const logout = () => { setUser(null); setState(empty); auth.signOut().catch(() => {}); };
-  const load = async () => { const r = await api.get('/api/state'); setState(r.data); };
+  useEffect(() => { client.getUser().then(setUser).catch(() => setUser(null)).finally(() => setChecking(false)); }, []);
+  const login = async () => { setError(''); try { const r = await client.signIn(); setUser(r.user); } catch (e) { setError(authErrorCopy(e)); } };
+  const logout = () => { setUser(null); setState(empty); client.signOut().catch(() => {}); };
+  const load = async () => { const r = await client.get<State>('/api/state'); setState(r.data); };
   useEffect(() => { if (user) load().catch(() => setError('Could not load your private data.')); }, [user]);
-  const mutate = async (path: string, body: Record<string, unknown>) => { setBusy(true); setError(''); try { await api.post(path, body); await load(); setModal(null); setForm({}); } catch (e: any) { setError(e?.response?.data?.message || e?.response?.data?.error || 'Nothing was changed. Please try again.'); } finally { setBusy(false); } };
+  const mutate = async (path: string, body: Record<string, unknown>) => { setBusy(true); setError(''); try { await client.post(path, body); await load(); setModal(null); setForm({}); } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); } };
   const xpLevel = Math.max(1, Math.floor(state.xp / 500) + 1), xpIn = state.xp % 500;
   const goalAllocated = state.goals.filter(g => !g.commitmentId && g.status !== 'archived').reduce((s, g) => s + g.saved, 0);
   const commitmentReserved = state.commitments.reduce((s, c) => s + Number(c.balance || 0), 0);

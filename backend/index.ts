@@ -1,29 +1,20 @@
 import { router, json, error, db, requireAuth } from '@appdeploy/sdk';
+import type { Goal, Commitment, Event, Profile, NewCommitment } from '../shared/types';
+import type { RouteHandler } from '@appdeploy/sdk';
 
-type Goal = {
-  id?: string; name: string; target: number; saved: number; spent: number;
-  bucket: string; account?: string; deadline?: string; status: string; kind: 'goal' | 'expense';
-  ownerUserId: string; commitmentId?: string; periodKey?: string; periodStatus?: string; archived?: boolean;
-};
-type Commitment = {
-  id?: string; name: string; amount: number; frequency: string; dueDay?: number;
-  kind: 'goal' | 'expense'; bucket: string; account?: string; active: boolean;
-  balance?: number; nextDueAt?: string; pendingAmount?: number; pendingFrequency?: string;
-  fundingMigrated?: boolean; ownerUserId: string;
-};
-type Event = {
-  id?: string; type: string; amount: number; from?: string; to?: string; goalId?: string;
-  commitmentId?: string; createdAt: string; reason?: string; location?: string;
-  fromName?: string; toName?: string; ownerUserId: string;
-};
-type Owned = { ownerUserId?: string };
+// Rows carry a platform-assigned `id`; `ownerUserId` is optional only because
+// that is how legacy pre-auth rows are detected. `claim()` needs `id` to address
+// the row it is updating, so both are declared.
+type Owned = { id?: string; ownerUserId?: string };
 const tables = ['goals', 'accounts', 'buckets', 'events', 'profile', 'commitments'];
 
 async function claim(userId: string) {
   for (const t of tables) {
     const r = await db.list<Owned>(t, { limit: 100 });
-    const legacy = r.items.filter(x => !x.ownerUserId);
-    if (legacy.length) await db.update(t, legacy.map(x => ({ id: x.id, record: { ...x, ownerUserId: userId } })));
+    // Rows always have an id in practice; guard anyway, since a row without one
+    // cannot be addressed and would silently update nothing.
+    const legacy = r.items.filter(x => !x.ownerUserId && x.id);
+    if (legacy.length) await db.update(t, legacy.map(x => ({ id: x.id!, record: { ...x, ownerUserId: userId } })));
   }
 }
 async function defaults(userId: string) {
@@ -42,12 +33,12 @@ async function defaults(userId: string) {
   if (!p.items.length) await db.add('profile', [{ xp: 0, unallocated: 0, ownerUserId: userId }]);
 }
 async function xp(uid: string, n: number) {
-  const r = await db.list('profile', { limit: 1, filter: { ownerUserId: uid } });
+  const r = await db.list<Profile>('profile', { limit: 1, filter: { ownerUserId: uid } });
   const p = r.items[0];
-  if (p) await db.update('profile', [{ id: p.id, record: { ...p, xp: ((p as any).xp || 0) + n } }]);
+  if (p) await db.update('profile', [{ id: p.id, record: { ...p, xp: (p.xp || 0) + n } }]);
 }
 async function profile(uid: string) {
-  const r = await db.list('profile', { limit: 1, filter: { ownerUserId: uid } });
+  const r = await db.list<Profile>('profile', { limit: 1, filter: { ownerUserId: uid } });
   return r.items[0];
 }
 function validFrequency(f: string) { return ['daily', 'weekly', 'monthly', 'yearly'].includes(f); }
@@ -134,7 +125,7 @@ async function getState(uid: string) {
     db.list('buckets', { limit: 50, filter: { ownerUserId: uid } }),
     db.list('accounts', { limit: 50, filter: { ownerUserId: uid } }),
     db.list<Event>('events', { limit: 200, filter: { ownerUserId: uid } }),
-    db.list('profile', { limit: 1, filter: { ownerUserId: uid } }),
+    db.list<Profile>('profile', { limit: 1, filter: { ownerUserId: uid } }),
     db.list<Commitment>('commitments', { limit: 100, filter: { ownerUserId: uid } })
   ]);
   const names = new Map(g.items.map(x => [x.id, x.name]));
@@ -143,11 +134,12 @@ async function getState(uid: string) {
   const contributions = events.filter(x => ['contribution', 'commitment_top_up'].includes(x.type)).length;
   const adjustments = events.filter(x => ['transfer', 'expense', 'withdrawal', 'spend', 'commitment_spend', 'commitment_deduction'].includes(x.type)).length;
   const goalAllocated = g.items.filter(x => !x.commitmentId).reduce((s, x) => s + Number(x.saved || 0), 0);
-  const commitmentReserved = c.items.reduce((s, x) => s + Number((x as any).balance || 0), 0);
-  const unallocated = Number((p.items[0] as any)?.unallocated || 0);
+  const commitmentReserved = c.items.reduce((s, x) => s + Number(x.balance || 0), 0);
+  const prof = p.items[0];
+  const unallocated = Number(prof?.unallocated || 0);
   return {
-    goals: g.items, accounts: a.items, buckets: b.items, commitments: c.items.map(x => ({ ...x, balance: Number((x as any).balance || 0), nextDueAt: (x as any).nextDueAt || nextDueAt(x) })),
-    events, unallocated, xp: (p.items[0] as any)?.xp || 0,
+    goals: g.items, accounts: a.items, buckets: b.items, commitments: c.items.map(x => ({ ...x, balance: Number(x.balance || 0), nextDueAt: x.nextDueAt || nextDueAt(x) })),
+    events, unallocated, xp: prof?.xp || 0,
     stats: {
       integrity: 100, discipline: Math.min(100, completed * 12), consistency: Math.min(100, contributions * 5),
       balance: Math.min(100, 50 + b.items.filter((x: any) => g.items.some(y => y.bucket === x.name)).length * 10),
@@ -173,7 +165,7 @@ async function getCommitment(uid: string, id: string) {
   const [c] = await db.get<Commitment>('commitments', [id]);
   return c && c.ownerUserId === uid ? c : null;
 }
-async function event(uid: string, record: Omit<Event, 'ownerUserId'>) {
+async function event(uid: string, record: Omit<Event, 'id' | 'ownerUserId'>) {
   const [id] = await db.add('events', [{ ...record, ownerUserId: uid }]);
   return id;
 }
@@ -209,7 +201,9 @@ export const processCommitments = async (_event: { type: 'cron'; name: string; i
   }
   return { statusCode: 200 };
 };
-const P = (fn: any) => [requireAuth(), fn];
+// Every route is wrapped in P: `[requireAuth(), handler]`. Typing the handler
+// param gives each route's `c` a real context type instead of `any`.
+const P = (fn: RouteHandler) => [requireAuth(), fn];
 
 export const handler = router({
   'GET /api/state': P(async c => json(await getState(c.user!.userId))),
@@ -217,7 +211,7 @@ export const handler = router({
     const x = c.body as any; const u = c.user!.userId; const n = Number(x.amount);
     if (n <= 0) return error('Enter a positive amount', 400);
     const p = await profile(u); if (!p) return error('Profile unavailable', 500);
-    const updated = await db.update('profile', [{ id: p.id, record: { ...p, unallocated: Number((p as any).unallocated || 0) + n } }]);
+    const updated = await db.update('profile', [{ id: p.id, record: { ...p, unallocated: Number(p.unallocated || 0) + n } }]);
     if (!updated[0]) return error('Could not add money', 500);
     const id = await event(u, { type: 'money_added', amount: n, location: x.location || '', createdAt: new Date().toISOString() });
     if (!id) return error('Money was added but its history event failed', 500);
@@ -248,7 +242,7 @@ export const handler = router({
       if (!x.releaseTo) return error(`The new target releases ${excess.toLocaleString()} from this quest. Choose where that money goes.`, 400);
       if (x.releaseTo === 'unallocated') {
         const p = await profile(u); if (!p) return error('Profile unavailable', 500);
-        await db.update('profile', [{ id: p.id, record: { ...p, unallocated: Number((p as any).unallocated || 0) + excess } }]);
+        await db.update('profile', [{ id: p.id, record: { ...p, unallocated: Number(p.unallocated || 0) + excess } }]);
       } else {
         const [destination] = await db.get<Goal>('goals', [x.releaseTo]);
         if (!destination || destination.ownerUserId !== u || destination.commitmentId || destination.status === 'archived' || destination.id === g.id) return error('Choose a valid destination quest', 400);
@@ -268,7 +262,7 @@ export const handler = router({
       if (!x.releaseTo) return error(`Reallocate the remaining ${balance.toLocaleString()} before archiving`, 400);
       if (x.releaseTo === 'unallocated') {
         const p = await profile(u); if (!p) return error('Profile unavailable', 500);
-        await db.update('profile', [{ id: p.id, record: { ...p, unallocated: Number((p as any).unallocated || 0) + balance } }]);
+        await db.update('profile', [{ id: p.id, record: { ...p, unallocated: Number(p.unallocated || 0) + balance } }]);
       } else {
         const [destination] = await db.get<Goal>('goals', [x.releaseTo]);
         if (!destination || destination.ownerUserId !== u || destination.commitmentId || destination.status === 'archived' || destination.id === g.id) return error('Choose a valid destination quest', 400);
@@ -283,7 +277,7 @@ export const handler = router({
   'POST /api/contributions': P(async c => {
     const x = c.body as any; const u = c.user!.userId; const n = Number(x.amount);
     if (!x.goalId || n <= 0) return error('Invalid allocation', 400);
-    const p = await profile(u); const available = Number((p as any)?.unallocated || 0);
+    const p = await profile(u); const available = Number(p?.unallocated || 0);
     if (!p || n > available) return error('Not enough unallocated money', 400);
     const [g] = await db.get<Goal>('goals', [x.goalId]);
     if (!g || g.ownerUserId !== u || g.status === 'archived' || g.commitmentId) return error('Quest is not available for allocation', 400);
@@ -300,7 +294,10 @@ export const handler = router({
     if (!x.name || n <= 0 || !validFrequency(frequency) || !x.bucket) return error('Missing required commitment fields', 400);
     if ((frequency === 'monthly' || frequency === 'yearly') && (dueDay < 1 || dueDay > 31)) return error('Due day must be between 1 and 31', 400);
     const kind = x.kind === 'goal' ? 'goal' : 'expense';
-    const record = {
+    // `nextDueAt` only reads name/amount/frequency/dueDay, so the seed object is
+    // cast rather than padded with fields the function ignores.
+    const seed = { name: x.name, amount: n, frequency, dueDay, kind, bucket: x.bucket, account: x.account || '', active: true, ownerUserId: u } as Commitment;
+    const record: NewCommitment = {
       name: x.name,
       amount: n,
       frequency,
@@ -310,7 +307,7 @@ export const handler = router({
       account: x.account || '',
       active: true,
       balance: 0,
-      nextDueAt: nextDueAt({ name: x.name, amount: n, frequency, dueDay, kind, bucket: x.bucket, account: x.account || '', active: true, ownerUserId: u }),
+      nextDueAt: nextDueAt(seed),
       fundingMigrated: true,
       ownerUserId: u
     };
@@ -323,7 +320,7 @@ export const handler = router({
     const x = c.body as any; const u = c.user!.userId; const n = Number(x.amount);
     if (!x.id || n <= 0) return error('Enter a positive top-up amount', 400);
     const cmt = await getCommitment(u, x.id); if (!cmt) return error('Commitment not found', 404);
-    const p = await profile(u); const available = Number((p as any)?.unallocated || 0);
+    const p = await profile(u); const available = Number(p?.unallocated || 0);
     if (!p || n > available) return error('Not enough unallocated money', 400);
     await db.update('profile', [{ id: p.id, record: { ...p, unallocated: available - n } }]);
     await db.update('commitments', [{ id: cmt.id, record: { ...cmt, balance: Number(cmt.balance || 0) + n } }]);
@@ -347,7 +344,7 @@ export const handler = router({
     if (x.to === 'unallocated') {
       const p = await profile(u); if (!p) return error('Profile unavailable', 500);
       await db.update('commitments', [{ id: cmt.id, record: { ...cmt, balance: Number(cmt.balance || 0) - n } }]);
-      await db.update('profile', [{ id: p.id, record: { ...p, unallocated: Number((p as any).unallocated || 0) + n } }]);
+      await db.update('profile', [{ id: p.id, record: { ...p, unallocated: Number(p.unallocated || 0) + n } }]);
       const id = await event(u, { type: 'commitment_rebalance', commitmentId: cmt.id, amount: n, to: 'unallocated', reason: x.reason || '', createdAt: new Date().toISOString() });
       if (!id) return error('Rebalance was not recorded', 500);
       return json({ ok: true });
@@ -390,7 +387,7 @@ export const handler = router({
   }),
   'POST /api/commitments/update': P(async c => {
     const x = c.body as any; const u = c.user!.userId; const cmt = await getCommitment(u, x.id);
-    if (!cmt || (cmt as any).archived) return error('Commitment cannot be edited', 400);
+    if (!cmt || cmt.archived) return error('Commitment cannot be edited', 400);
     if (!x.name || !x.bucket) return error('Name and bucket are required', 400);
     const record = { ...cmt, name: x.name, bucket: x.bucket, account: x.account || '', kind: x.kind === 'goal' ? 'goal' : 'expense' };
     await db.update('commitments', [{ id: cmt.id, record }]);
