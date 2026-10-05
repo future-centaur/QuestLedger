@@ -1,12 +1,14 @@
 // The transport seam for QuestLedger.
 //
 // Step 3 of the decoupling: the domain should not know which backend it talks to.
-// `App.tsx` imports the interface below, not `@appdeploy/client`, so swapping
-// AppDeploy for an HTTP backend (step 7) touches this file and nothing else.
+// `App.tsx` imports the interface below, not the platform client package, so
+// swapping in an HTTP backend (step 7) touches this file and nothing else.
 //
 // Why an interface rather than swapping the import directly: a direct swap is
 // about fifteen lines and looks simpler, but it couples the domain to one
 // backend's auth *and* transport, so the next migration costs the same again.
+//
+// Nothing in this file names a vendor. That is the point of it.
 
 import type { User } from '../shared/types';
 
@@ -22,7 +24,7 @@ export interface QuestLedgerClient {
  * Error shape the UI depends on.
  *
  * `App.tsx:mutate()` reads `e.response.data.message || e.response.data.error`.
- * **This is unverified** — the AppDeploy SDK is not vendored in this repo, so we
+ * **This is unverified** — the platform SDK is not vendored in this repo, so we
  * cannot confirm which key its `error(msg, code)` helper actually emits. If it
  * emits neither, then every server-side validation message is *already* being
  * replaced by the generic fallback today, including the money guardrails

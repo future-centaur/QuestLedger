@@ -21,14 +21,16 @@ QuestLedger intentionally tracks assigned/expected balances rather than verified
 
 ## Current architecture
 
-The current production version is intentionally **AppDeploy-native** because AppDeploy is the project's current deployment environment.
+The production app runs on a managed platform that supplies its auth, API, and
+database. The vendor is deliberately not named here: the app reaches it through
+a single interface, so the backend is swappable without touching the product code.
 
 ```text
 React + Vite
      │
-     ├── AppDeploy Auth
-     ├── AppDeploy API
-     └── AppDeploy Database
+     ├── QuestLedgerClient          ← the only thing the UI knows about
+     │
+     └── Platform SDK (auth, api, db)   ← src/client.platform.ts, one file
              │
              └── user-scoped financial records
 ```
@@ -45,15 +47,24 @@ are read and written against the signed-in user.
 > [`DECOUPLING_AUDIT.md` §5](./docs/DECOUPLING_AUDIT.md) and decision note `claim()`
 > in [`handoff.md`](./docs/handoff.md). It must not be carried into any new backend.
 
-### Why AppDeploy?
+### Portability status
 
-QuestLedger is still in active product development and is currently deployed through AppDeploy. The repository keeps the AppDeploy integration as the source of truth so the GitHub version matches the working application.
+The provider boundary is in place: the UI depends on the `QuestLedgerClient`
+interface, and exactly one file implements it over the current platform
+(`src/client.platform.ts`). Swapping the backend means replacing that one file.
 
-A future portability project may introduce a provider boundary and a hosted database/auth option such as Supabase, allowing deployment to Vercel, Netlify, or another platform. That migration is **not required for the current application** and is intentionally not represented as complete here.
+That work is **in progress, not complete**. The backend still reads and writes
+through the platform SDK, and money-moving routes do read-modify-write without
+database transactions — so the platform still constrains correctness, not just
+deployment. The current gaps, blockers, and migration sequence are tracked in
+[`docs/handoff.md`](./docs/handoff.md).
+
+The repository remains a mirror of the deployed app, so the platform is
+authoritative and GitHub is downstream.
 
 ## Local development
 
-The repository can be inspected and developed as a standard Vite/React project, but the authenticated application requires an AppDeploy-compatible runtime for its backend, database, and authentication features.
+The repository can be inspected and developed as a standard Vite/React project, but the authenticated application requires the platform's runtime for its backend, database, and authentication features — those SDK packages are supplied by the host and are not in `package.json`, so `npm run dev` will not work standalone.
 
 ```bash
 npm install
@@ -72,21 +83,28 @@ npm run build
 QuestLedger/
 ├── src/
 │   ├── App.tsx
+│   ├── client.ts               the interface the UI depends on
+│   ├── client.platform.ts      its one implementation — the seam
 │   ├── index.css
 │   └── main.tsx
+├── shared/
+│   └── types.ts                types shared by UI and backend
 ├── backend/
 │   ├── index.ts
-│   ├── realtime.ts
-│   └── realtime-subscribers.ts
+│   ├── realtime.ts             (dead code)
+│   └── realtime-subscribers.ts (dead code)
 ├── tests/
 │   └── tests.json
-├── appdeploy.auth-login.json
+├── docs/                       decoupling brief, audit, handoff
+├── <platform>.auth-login.json  auth config (filename set by the host)
 ├── index.html
 ├── package.json
 ├── postcss.config.js
 ├── tailwind.config.js
 ├── tsconfig.json
 ├── vite.config.ts
+├── check-types.sh              local typecheck
+├── sdk-shim.d.ts               ambient SDK decls, not shipped
 ├── .gitignore
 ├── LICENSE
 └── README.md

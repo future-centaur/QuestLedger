@@ -3,11 +3,11 @@ import { Plus, Target, Wallet, Shield, Scale, ArrowRightLeft, Trophy, ChevronRig
 import type { Goal, Commitment, Event, State, User } from '../shared/types';
 import type { QuestLedgerClient } from './client';
 import { errorMessage, authErrorCopy } from './client';
-import { AppDeployClient } from './client.appdeploy';
+import { PlatformClient } from './client.platform';
 
 // The only line that names an implementation. Step 7 swaps this for the HTTP
 // client; nothing else in this file changes.
-const client: QuestLedgerClient = new AppDeployClient();
+const client: QuestLedgerClient = new PlatformClient();
 
 const empty: State = { goals: [], accounts: [], buckets: [], commitments: [], events: [], xp: 0, unallocated: 0, stats: { integrity: 100, discipline: 0, consistency: 0, balance: 50, power: 0, adaptability: 0 } };
 const money = (n: number) => `KSh ${Math.round(n).toLocaleString()}`;
