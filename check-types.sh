@@ -13,10 +13,10 @@
 set -u
 cd "$(dirname "$0")"
 
-echo "=== backend/index.ts (via sdk-shim.d.ts) ==="
+echo "=== backend (via sdk-shim.d.ts) ==="
 npx --yes -p typescript@5.7 tsc --noEmit --strict --skipLibCheck \
   --module esnext --moduleResolution bundler --target es2020 \
-  sdk-shim.d.ts shared/types.ts backend/index.ts
+  sdk-shim.d.ts backend/index.ts
 echo "backend exit=$?"
 
 echo
@@ -33,10 +33,10 @@ npx --yes -p typescript@5.7 tsc --noEmit --strict --skipLibCheck \
 echo "union exit=$?"
 
 echo
-echo "=== src/App.tsx (needs react + the platform client; expect module-resolution errors) ==="
+echo "=== src (needs react + the platform client; expect module-resolution errors) ==="
 npx --yes -p typescript@5.7 tsc --noEmit --strict --skipLibCheck \
   --jsx react-jsx --module esnext --moduleResolution bundler --target es2020 \
-  --noUnusedLocals --lib es2020,dom,dom.iterable src/App.tsx 2>&1 \
+  --noUnusedLocals --lib es2020,dom,dom.iterable src/main.tsx 2>&1 \
   | grep -v "Cannot find module 'react'\|Cannot find module 'lucide-react'\|Cannot find module '@appdeploy/client'\|Cannot find module 'react-dom'" \
   | head -40
 echo "App.tsx exit=${PIPESTATUS[0]:-?}"

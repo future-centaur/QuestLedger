@@ -2,7 +2,7 @@
 //
 // This is the ONLY file that imports the platform client package. It is the
 // seam that step 7 removes: delete this, add an HTTP implementation, and
-// `App.tsx` is untouched because it depends on the interface, not on this class.
+// `main.tsx` is the only call site because the UI depends on the interface.
 //
 // The class is named for the *shape* of the implementation, not the vendor, so
 // the file needs no rename when the backend does. The vendor name survives only

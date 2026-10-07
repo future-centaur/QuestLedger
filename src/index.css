@@ -30,3 +30,5 @@ nav{position:fixed;bottom:0;left:0;right:0;height:70px;background:#0d1319ee;bord
 @media(max-width:700px){.recurringHealth{align-items:flex-start;flex-direction:column}.runwayMetric{text-align:left}.commitHero{align-items:flex-start;flex-direction:column}.metricGrid{grid-template-columns:1fr}.manageCommit{display:grid}.manageCommit>*{width:100%;justify-content:center}}
 
 @media(max-width:380px){.actions{grid-template-columns:1fr}.actions button{flex:unset}.cardActions{display:grid;grid-template-columns:1fr}.cardActions button{width:100%}.manageRow{display:grid;grid-template-columns:1fr}}
+
+.authCard{display:grid;gap:10px;min-width:min(100%,320px)}.authCard label{display:grid;gap:4px;font-size:11px;color:#a2adba}.authCard input{background:#10161c;border:1px solid #2a3540;border-radius:10px;color:#eef2f7;padding:10px 12px}.authProviders{display:flex;gap:8px;flex-wrap:wrap}.authProviders button,.textBtn{background:#202a34;color:#eef2f7;border-radius:10px;padding:10px 12px}.textBtn{background:transparent;color:#a2adba;text-align:left;padding:0}a.ghostBtn{text-decoration:none}

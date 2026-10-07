@@ -2,10 +2,10 @@
 
 **Read this first, then read [`APPDEPLOY_DECOUPLING_BRIEF.md`](./APPDEPLOY_DECOUPLING_BRIEF.md) and [`DECOUPLING_AUDIT.md`](./DECOUPLING_AUDIT.md) in that order.** The brief says why the migration is happening. The audit says what the code actually is. This file says where things stand right now and what to do next.
 
-- **Date:** 2026-10-05
+- **Date:** 2026-10-05, structure updated 2026-10-07 (uncommitted)
 - **Branch:** `appdeploy-decoupling`
-- **Working tree:** clean
-- **Unpushed:** **2** — `4c3c07b` (doc corrections) and `82a7c0a` (steps 2–3). `origin/appdeploy-decoupling` is at `9edacc6`
+- **Working tree:** domain / HTTP / view split described in §2. Not committed.
+- **Unpushed as of 2026-10-05:** **2** — `4c3c07b` (doc corrections) and `82a7c0a` (steps 2–3). `origin/appdeploy-decoupling` was at `9edacc6`
 - **`main` / `origin/main`:** `a5d48d4`
 
 ---
@@ -44,12 +44,20 @@ This distinction is enforced by `if (g.commitmentId)` guards appearing **11 time
 ### Architecture as deployed
 
 ```
-React + Vite  →  QuestLedgerClient  →  platform SDK (auth, api, db)  →  platform API  →  platform DB
-                      ▲
-              src/client.platform.ts  — one file; step 7 replaces it
-                                                        ↓
-                                              cron.json: processCommitments (*/5 min, Africa/Nairobi)
+React views → useSession → Ledger API → QuestLedgerClient → platform client SDK
+                                              ▲
+                                    src/client.platform.ts
+
+HTTP  backend/index.ts (handler)
+        → http/routes.ts
+        → domain/ledger.ts          money rules, no SDK import
+        → LedgerStore
+        → backend/platform.ts       the only live SDK import
+
+cron.json processCommitments → the same ledger
 ```
+
+**Structure as of 2026-10-07.** The prototype kept every route, every query, and the whole UI in two files, and the handoff below used to say that was the house style. It is not. The split above is the shape to keep: a persistence port, commands that return a result instead of an HTTP response, and a UI that does not know URL paths. Postgres replaces `backend/platform.ts`. It should not require rewriting `domain/ledger.ts` or the views. Line numbers in the audit still refer to the pre-split `backend/index.ts`.
 
 The vendor is named in `docs/APPDEPLOY_DECOUPLING_BRIEF.md` and throughout `DECOUPLING_AUDIT.md`, because those record *why* this coupling exists. It is deliberately absent from the product surface — `src/` and `README.md` refer to "the platform", since `src/client.platform.ts` makes that true.
 
@@ -57,8 +65,8 @@ Three entry points, not one:
 
 | Entry | File | Purpose |
 | --- | --- | --- |
-| Browser | `index.html` → `src/main.tsx` → `src/App.tsx` | All UI, single 131-line file |
-| HTTP | `backend/index.ts` → `export handler` | 21 routes, all `requireAuth()` |
+| Browser | `index.html` → `src/main.tsx` → `src/App.tsx` | Shell. Views live under `src/components/` |
+| HTTP | `backend/index.ts` → `export handler` | 21 routes, all `requireAuth()`, logic in `domain/ledger.ts` |
 | Cron | `backend/index.ts` → `export processCommitments` | Commitment deduction |
 
 ### Repo shape
@@ -66,27 +74,30 @@ Three entry points, not one:
 ```
 QuestLedger/
 ├── src/
-│   ├── App.tsx                 every component in one file; imports the client *interface*
-│   ├── client.ts               QuestLedgerClient + error helpers — no platform import
-│   ├── client.platform.ts      the only file importing the platform client
-│   ├── main.tsx
-│   └── index.css               hand-written CSS, dense
-├── shared/
-│   └── types.ts                shared by src/ and backend/; discriminated Goal union
+│   ├── main.tsx                composition root — constructs the platform client
+│   ├── App.tsx                 shell only
+│   ├── session/useSession.ts
+│   ├── api/ledger.ts           the only UI file with HTTP paths
+│   ├── components/             views
+│   ├── client.ts               QuestLedgerClient — no platform import
+│   └── client.platform.ts      the only file importing the platform client
+├── shared/                     types, accounting, money parsing, config
 ├── backend/
-│   ├── index.ts                domain + all 21 routes
-│   ├── realtime.ts               21 lines — DEAD CODE, step 1
-│   └── realtime-subscribers.ts 117 lines — DEAD CODE, step 1
+│   ├── index.ts                composition root: handler + processCommitments
+│   ├── http/routes.ts
+│   ├── domain/ledger.ts        money rules
+│   ├── store.ts                persistence port
+│   ├── platform.ts             the only live SDK import
+│   ├── realtime.ts             DEAD CODE, step 1 — do not delete yet
+│   └── realtime-subscribers.ts DEAD CODE, step 1 — do not delete yet
 ├── tests/tests.json     6 declarative E2E scenarios (not executable here)
 ├── docs/                brief + audit + probe + this file
 ├── sdk-shim.d.ts        ambient decls for the unvendored SDK — not shipped
 ├── check-types.sh       local typecheck; the only runnable check in the repo
-├── check-union.ts       proves the Goal union narrows at the money call sites
+├── check-union.ts       proves the Goal union narrows at the money selectors
 ├── <platform>.auth-login.json  platform config: OAuth methods + theme
 └── cron.json            platform config: schedule
 ```
-
-~740 lines of application code total.
 
 ### What works
 
@@ -104,12 +115,12 @@ Worth knowing because the audit references them:
 These are deliberate. Match them when editing.
 
 - **No SQL anywhere.** All persistence goes through `db.*` with plain `{ id, ...fields }` objects.
-- **No layering.** No `services/`, `models/`, `controllers/`. `backend/index.ts` *is* the schema.
+- **Layering is the point of the port.** `backend/domain/` owns the money rules and returns a result. `backend/http/routes.ts` is transport. `backend/platform.ts` is the only live file that imports the platform SDK, behind the `LedgerStore` port in `backend/store.ts`. `backend/index.ts` only composes those and exports `handler` and `processCommitments` — those two names are what the host loads. Do not fold this back into one file; that shape was the prototype, not the design.
 - **Guard-clause validation, never exceptions.** `if (!x || n <= 0) return error('...', 400)`. Message text encodes product rules and tests assert against it.
 - **`const P = (fn) => [requireAuth(), fn)`** (`:212`) wraps every route. Ownership is re-checked per row (`g.ownerUserId !== u`) as defense in depth.
 - **Refetch-after-write.** `mutate()` posts then calls `load()` for the full state. No cache, no optimistic updates. `GET /api/state` is the single read endpoint.
 - **One endpoint, whole-world snapshot.** The client holds no local state beyond `{user, state, tab, modal, form}`.
-- **Dense one-liners and inline ternaries** throughout. This is house style, not carelessness.
+- **Ordinary formatting.** The one-line components were an artifact of the platform export, not a style to keep.
 - **`ownerUserId` on every row**, stamped centrally by `event()` (`:176`) so callers can't forget it.
 
 ---

@@ -12,9 +12,15 @@
 
 import type { User } from '../shared/types';
 
+export type OAuthProvider = 'google' | 'apple' | 'x';
+
 export interface QuestLedgerClient {
   getUser(): Promise<User>;
+  /** Platform popup. The HTTP client uses the provider and password methods instead. */
   signIn(): Promise<{ user: User }>;
+  signInWithProvider?(provider: OAuthProvider): Promise<{ user: User }>;
+  signInWithPassword?(email: string, password: string): Promise<{ user: User }>;
+  signUp?(email: string, password: string, name?: string): Promise<{ user: User }>;
   signOut(): Promise<void>;
   get<T>(path: string): Promise<{ data: T }>;
   post<T>(path: string, body: unknown): Promise<{ data: T }>;
