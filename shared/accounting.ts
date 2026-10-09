@@ -1,5 +1,5 @@
-import { xpConfig } from './config';
-import { isStandalone } from './types';
+import { xpConfig } from './config.js';
+import { isStandalone } from './types.js';
 import type { Commitment, Goal } from './types';
 
 /**

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { handleNode } from '../backend/http/nodeAdapter';
+import { handleNode } from '../backend/http/nodeAdapter.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 

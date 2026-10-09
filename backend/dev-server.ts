@@ -3,9 +3,9 @@ import { config } from 'dotenv';
 
 config();
 
-const { ensureMigrated } = await import('./db/migrate');
+const { ensureMigrated } = await import('./db/migrate.js');
 await ensureMigrated();
-const { handleNode } = await import('./http/nodeAdapter');
+const { handleNode } = await import('./http/nodeAdapter.js');
 const port = Number(process.env.PORT || 8787);
 
 createServer((req, res) => {

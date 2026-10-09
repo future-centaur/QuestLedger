@@ -1,4 +1,4 @@
-import { frequencies } from '../../shared/config';
+import { frequencies } from '../../shared/config.js';
 import type { Commitment, Frequency } from '../../shared/types';
 
 export function validFrequency(f: string): f is Frequency {

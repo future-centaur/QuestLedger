@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { handleRequest } from './nodeHandler';
+import { handleRequest } from './nodeHandler.js';
 
 /** Node and Vercel both call the same Web handler. */
 export async function handleNode(req: IncomingMessage, res: ServerResponse) {

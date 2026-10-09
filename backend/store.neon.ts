@@ -1,6 +1,6 @@
 import type { LedgerStore } from './store';
-import { query } from './db/client';
-import { transaction } from './db/client';
+import { query } from './db/client.js';
+import { transaction } from './db/client.js';
 
 type Kind = 'text' | 'num' | 'bool' | 'int' | 'time' | 'id';
 

@@ -2,20 +2,20 @@ import {
   defaultAccounts,
   defaultBuckets,
   listLimits,
-} from '../../shared/config';
+} from '../../shared/config.js';
 import {
   allocatedToQuests,
   characterStats,
   monthlyOutflow,
   reservedInCommitments,
-} from '../../shared/accounting';
-import { parsePositive } from '../../shared/money';
-import { isPeriod } from '../../shared/types';
+} from '../../shared/accounting.js';
+import { parsePositive } from '../../shared/money.js';
+import { isPeriod } from '../../shared/types.js';
 import type { Commitment, Event, Goal, NewCommitment, Profile } from '../../shared/types';
 import type { LedgerStore } from '../store';
-import { fail, ok } from './outcome';
+import { fail, ok } from './outcome.js';
 import type { Outcome } from './outcome';
-import { duePeriodKey, nextDueAt, validFrequency } from './schedule';
+import { duePeriodKey, nextDueAt, validFrequency } from './schedule.js';
 
 type Owned = { id?: string; ownerUserId?: string };
 
