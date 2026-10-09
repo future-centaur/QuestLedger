@@ -6,8 +6,8 @@ import { config } from 'dotenv';
 
 config();
 
-const { ensureMigrated } = await import('./db/migrate');
-const { handleNode } = await import('./http/nodeAdapter');
+const { ensureMigrated } = await import('./db/migrate.js');
+const { handleNode } = await import('./http/nodeAdapter.js');
 
 await ensureMigrated();
 

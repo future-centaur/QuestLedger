@@ -1,5 +1,5 @@
 import { compare, hash } from 'bcryptjs';
-import { query } from '../db/client';
+import { query } from '../db/client.js';
 
 export type AccountUser = { id: string; email: string | null; name: string | null };
 

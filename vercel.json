@@ -1,8 +1,13 @@
 {
+  "functions": {
+    "api/**/*.ts": {
+      "includeFiles": "backend/db/migrations/**"
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/commitments",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }

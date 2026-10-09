@@ -1,6 +1,6 @@
 import { createPrivateKey } from 'node:crypto';
 import { Apple, Google, Twitter, decodeIdToken, generateCodeVerifier } from 'arctic';
-import { oauthState } from './session';
+import { oauthState } from './session.js';
 
 export const providers = ['google', 'apple', 'x'] as const;
 export type OAuthProvider = (typeof providers)[number];

@@ -1,9 +1,9 @@
-import { createLedger } from '../domain/ledger';
+import { createLedger } from '../domain/ledger.js';
 import type { CronEvent } from '../domain/ledger';
 import type { Outcome } from '../domain/outcome';
-import { transaction } from '../db/client';
-import { ensureMigrated } from '../db/migrate';
-import { neonStore } from '../store.neon';
+import { transaction } from '../db/client.js';
+import { ensureMigrated } from '../db/migrate.js';
+import { neonStore } from '../store.neon.js';
 import {
   checkPassword,
   createPasswordUser,
@@ -11,9 +11,9 @@ import {
   findUserById,
   publicUser,
   upsertOAuthUser,
-} from '../auth/users';
-import { appHome, authorization, isProvider, profileFromCode, providerConfigured } from '../auth/oauth';
-import { clearSessionCookie, readOAuthState, readSession, sessionCookie } from '../auth/session';
+} from '../auth/users.js';
+import { appHome, authorization, isProvider, profileFromCode, providerConfigured } from '../auth/oauth.js';
+import { clearSessionCookie, readOAuthState, readSession, sessionCookie } from '../auth/session.js';
 
 const ledger = createLedger(neonStore);
 

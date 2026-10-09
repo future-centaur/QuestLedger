@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PoolClient } from '@neondatabase/serverless';
-import { databaseUrl } from './client';
+import { databaseUrl } from './client.js';
 import { Pool, neonConfig } from '@neondatabase/serverless';
 import ws from 'ws';
 
