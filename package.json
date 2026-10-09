@@ -4,25 +4,37 @@
     "version": "0.0.1",
     "type": "module",
     "scripts": {
-        "dev": "vite",
+        "dev": "tsx backend/dev.ts",
+        "dev:api": "tsx backend/dev-server.ts",
+        "db:schema": "tsx backend/db/apply-schema.ts",
+        "cron": "tsx backend/cron-once.ts",
         "build": "vite build",
         "preview": "vite preview"
     },
     "dependencies": {
+        "@neondatabase/serverless": "^1.2.0",
+        "arctic": "^3.7.0",
+        "bcryptjs": "^3.0.3",
         "lucide-react": "^0.469.0",
         "react": "^19.0.0",
-        "react-dom": "^19.0.0"
+        "react-dom": "^19.0.0",
+        "ws": "^8.22.0"
     },
     "optionalDependencies": {
         "@rollup/rollup-linux-x64-gnu": "^4.0.0"
     },
     "devDependencies": {
+        "@types/bcryptjs": "^2.4.6",
+        "@types/node": "^26.6.4",
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",
+        "@types/ws": "^8.18.2",
         "@vitejs/plugin-react": "^4.3.0",
         "autoprefixer": "^10.4.0",
+        "dotenv": "^18.0.6",
         "postcss": "^8.4.0",
         "tailwindcss": "^3.4.0",
+        "tsx": "^4.23.15",
         "typescript": "^5.7.0",
         "vite": "^6.0.0"
     }

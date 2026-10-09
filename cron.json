@@ -1,8 +1,0 @@
-[
-  {
-    "name": "process-commitments",
-    "cron": "*/5 * * * *",
-    "handler": "processCommitments",
-    "timezone": "Africa/Nairobi"
-  }
-]

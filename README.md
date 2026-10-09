@@ -21,34 +21,36 @@ QuestLedger intentionally tracks assigned/expected balances rather than verified
 
 ## Current architecture
 
-The current production version is intentionally **AppDeploy-native** because AppDeploy is the project's current deployment environment.
+The app runs as a Vite UI and a Node API, backed by Neon Postgres. The same API process serves local development and Vercel. Sign-in is email and password, or Google, Apple, and X.
 
 ```text
 React + Vite
      │
-     ├── AppDeploy Auth
-     ├── AppDeploy API
-     └── AppDeploy Database
+     ├── views
+     ├── useSession
+     └── HTTP client
              │
-             └── user-scoped financial records
+             └── QuestLedger API
+                     │
+                     ├── domain (money rules)
+                     └── Neon
 ```
 
-Authentication and every financial API route are user-scoped so multiple users can safely share the application without sharing financial state.
+Authentication and every financial API route are user-scoped, so financial records
+are read and written against the signed-in user.
 
-### Why AppDeploy?
-
-QuestLedger is still in active product development and is currently deployed through AppDeploy. The repository keeps the AppDeploy integration as the source of truth so the GitHub version matches the working application.
-
-A future portability project may introduce a provider boundary and a hosted database/auth option such as Supabase, allowing deployment to Vercel, Netlify, or another platform. That migration is **not required for the current application** and is intentionally not represented as complete here.
+Money commands run inside a database transaction. Two requests at the same time can still overwrite a balance until the update itself checks the current amount.
 
 ## Local development
 
-The repository can be inspected and developed as a standard Vite/React project, but the authenticated application requires an AppDeploy-compatible runtime for its backend, database, and authentication features.
+Fill [`.env`](./.env) from [`.env.example`](./.env.example), then:
 
 ```bash
 npm install
 npm run dev
 ```
+
+That applies any pending database migrations, starts the API, and starts the UI at `http://localhost:5173`. On Vercel the API applies those same migrations on startup. `vercel.json` schedules deductions every five minutes in UTC (a Hobby plan may only allow a daily cron). `npm run cron` runs them once against Neon.
 
 Production build:
 
@@ -61,22 +63,38 @@ npm run build
 ```text
 QuestLedger/
 ├── src/
-│   ├── App.tsx
-│   ├── index.css
-│   └── main.tsx
+│   ├── main.tsx                starts the UI against the HTTP API
+│   ├── App.tsx                 shell: tabs, modals, which view is showing
+│   ├── session/useSession.ts   auth and the refetch-after-write cycle
+│   ├── api/ledger.ts           named calls; the only HTTP paths in the UI
+│   ├── components/             views, one concern per file
+│   ├── format/display.ts
+│   ├── client.ts               the interface the UI depends on
+│   └── client.http.ts          browser client for the API
+├── shared/
+│   ├── types.ts                types shared by UI and backend
+│   ├── accounting.ts           conservation totals and character stats
+│   ├── money.ts                the only parser for amounts from outside
+│   └── config.ts               currency, defaults, list caps
+├── api/                        Vercel function for /api/*
 ├── backend/
-│   ├── index.ts
-│   ├── realtime.ts
-│   └── realtime-subscribers.ts
+│   ├── dev.ts                  npm run dev: migrate, API, and Vite
+│   ├── store.neon.ts           Neon LedgerStore
+│   ├── http/                   API handler
+│   ├── db/migrations/          ordered SQL, applied once each
+│   ├── domain/                 ledger commands
+│   └── store.ts                persistence port
 ├── tests/
-│   └── tests.txt
-├── appdeploy.auth-login.json
+│   └── tests.json
+├── docs/                       decoupling brief, audit, handoff
 ├── index.html
 ├── package.json
 ├── postcss.config.js
 ├── tailwind.config.js
 ├── tsconfig.json
 ├── vite.config.ts
+├── check-types.sh              local typecheck
+├── sdk-shim.d.ts               ambient SDK decls, not shipped
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -84,7 +102,9 @@ QuestLedger/
 
 ## QA
 
-The current AppDeploy build has five core end-to-end workflows covering authentication, mobile responsiveness, goal creation/persistence, user isolation, and sign-out. Automated endpoint coverage is not exhaustive; the five user-facing workflows are the primary regression suite.
+The current build has six end-to-end scenarios in [`tests/tests.json`](./tests/tests.json): commitment creation with a valid schedule; sign-in and the funded recurring workspace; quest edit and target adjustment; quest archive with explicit reallocation; commitment edit and archive; and the archive guardrails. Automated endpoint coverage is not exhaustive; these six are the primary regression suite and should be run before any migration cutover.
+
+Coverage is thinner than the file count suggests. Only the archive-guardrail scenario is a negative test, and **none of the six covers** float precision or rounding, partial/underfunded deduction, `commitment_deduction` idempotency, the list-cap behaviour, or the cron `processCommitments` path at all — which is the `GET /api/state` bootstrap in `backend/domain/ledger.ts`. Note also that these scenarios are declarative and **are not executable from this repository**; they are run by the platform's agent against a deployed build.
 
 ## Roadmap
 
