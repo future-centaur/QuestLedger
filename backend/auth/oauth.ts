@@ -45,11 +45,10 @@ export function authorization(provider: OAuthProvider): { url: URL; state: strin
   const state = oauthState({ verifier, provider });
   if (provider === 'google') {
     const google = new Google(process.env.GOOGLE_CLIENT_ID!, process.env.GOOGLE_CLIENT_SECRET!, callbackUrl(provider));
-    return {
-      url: google.createAuthorizationURL(state, verifier, ['openid', 'email', 'profile']),
-      state,
-      verifier,
-    };
+    const url = google.createAuthorizationURL(state, verifier, ['openid', 'email', 'profile']);
+    // Show Google accounts already signed in on this browser, instead of a blank login form.
+    url.searchParams.set('prompt', 'select_account');
+    return { url, state, verifier };
   }
   if (provider === 'x') {
     const twitter = new Twitter(process.env.X_CLIENT_ID!, process.env.X_CLIENT_SECRET!, callbackUrl(provider));

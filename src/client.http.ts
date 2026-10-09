@@ -25,12 +25,39 @@ export class HttpClient implements QuestLedgerClient {
     const data = (await send('/api/auth/session')) as { user: User };
     return data.user ?? null;
   }
-  signIn(): Promise<{ user: User }> {
-    return Promise.reject(new Error('Choose a provider or email sign-in.'));
-  }
   signInWithProvider(provider: OAuthProvider): Promise<{ user: User }> {
-    window.location.assign(`${root()}/api/auth/${provider}`);
-    return new Promise(() => {});
+    const popup = window.open(
+      `${root()}/api/auth/${provider}`,
+      'questledger-auth',
+      'popup,width=480,height=720',
+    );
+    if (!popup) return Promise.reject(new Error('Please allow popups to sign in.'));
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (run: () => void) => {
+        if (settled) return;
+        settled = true;
+        window.clearInterval(timer);
+        window.removeEventListener('message', onMessage);
+        run();
+      };
+      const onMessage = (event: MessageEvent) => {
+        if (event.origin !== window.location.origin) return;
+        const data = event.data as { type?: string; error?: string | null };
+        if (data?.type !== 'questledger-auth') return;
+        finish(() => {
+          if (data.error) reject(new Error(data.error));
+          else this.getUser().then((user) => (user ? resolve({ user }) : reject(new Error('Could not sign in.'))));
+        });
+      };
+      window.addEventListener('message', onMessage);
+      const timer = window.setInterval(() => {
+        if (!popup.closed) return;
+        finish(() => {
+          this.getUser().then((user) => (user ? resolve({ user }) : reject(new Error('Sign-in was cancelled.'))));
+        });
+      }, 400);
+    });
   }
   async signInWithPassword(email: string, password: string): Promise<{ user: User }> {
     const data = (await send('/api/auth/login', {
