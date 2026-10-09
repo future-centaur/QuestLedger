@@ -26,33 +26,9 @@ export type CronEvent = {
   scheduledTime: string;
 };
 
-/**
- * Application service. HTTP and the cron entrypoint call this; nothing here
- * knows about status codes' transport or the platform SDK.
- */
-export function createLedger(store: LedgerStore, options?: { claimLegacy?: boolean }) {
-  const claimLegacy = options?.claimLegacy !== false;
-  /**
-   * Pre-auth migration. Lists every table unfiltered and stamps `ownerUserId`
-   * onto rows that lack one. In a multi-user database this assigns other
-   * people's unowned rows to the caller. It stays so existing single-user
-   * data still loads. Do not port it — new storage gets a schema migration.
-   */
-  async function claim(userId: string) {
-    const tables = ['goals', 'accounts', 'buckets', 'events', 'profile', 'commitments'];
-    for (const t of tables) {
-      const r = await store.list<Owned>(t, { limit: listLimits.legacyClaim });
-      const legacy = r.items.filter((x) => !x.ownerUserId && x.id);
-      if (legacy.length)
-        await store.update(
-          t,
-          legacy.map((x) => ({ id: x.id!, record: { ...x, ownerUserId: userId } })),
-        );
-    }
-  }
-
+/** Application service. HTTP and the cron entrypoint call this. */
+export function createLedger(store: LedgerStore) {
   async function defaults(userId: string) {
-    if (claimLegacy) await claim(userId);
     const b = await store.list('buckets', { limit: listLimits.buckets, filter: { ownerUserId: userId } });
     if (!b.items.length)
       await store.add(

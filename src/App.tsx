@@ -53,11 +53,9 @@ export default function App({ client }: { client: QuestLedgerClient }) {
     busy,
     error,
     setError,
-    login,
     loginWithProvider,
     loginWithPassword,
     signUp,
-    accountAuth,
     logout,
     xpLevel,
     xpIn,
@@ -94,13 +92,10 @@ export default function App({ client }: { client: QuestLedgerClient }) {
   if (!user)
     return (
       <Landing
-        onLogin={login}
         error={error}
-        account={
-          accountAuth
-            ? { onProvider: loginWithProvider, onPassword: loginWithPassword, onSignUp: signUp }
-            : undefined
-        }
+        onProvider={loginWithProvider}
+        onPassword={loginWithPassword}
+        onSignUp={signUp}
       />
     );
 

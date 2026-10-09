@@ -2,6 +2,7 @@ import { createLedger } from '../domain/ledger';
 import type { CronEvent } from '../domain/ledger';
 import type { Outcome } from '../domain/outcome';
 import { transaction } from '../db/client';
+import { ensureMigrated } from '../db/migrate';
 import { neonStore } from '../store.neon';
 import {
   checkPassword,
@@ -14,7 +15,7 @@ import {
 import { appHome, authorization, isProvider, profileFromCode, providerConfigured } from '../auth/oauth';
 import { clearSessionCookie, readOAuthState, readSession, sessionCookie } from '../auth/session';
 
-const ledger = createLedger(neonStore, { claimLegacy: false });
+const ledger = createLedger(neonStore);
 
 const commands = {
   'POST /api/money': (uid: string, body: unknown) => ledger.addMoney(uid, body),
@@ -199,6 +200,7 @@ function cronAuthorized(request: Request): boolean {
 }
 
 export async function handleRequest(request: Request): Promise<Response> {
+  await ensureMigrated();
   if (request.method === 'OPTIONS') {
     const origin = allowOrigin(request);
     const headers = new Headers();

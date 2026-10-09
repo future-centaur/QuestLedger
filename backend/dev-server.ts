@@ -3,6 +3,8 @@ import { config } from 'dotenv';
 
 config();
 
+const { ensureMigrated } = await import('./db/migrate');
+await ensureMigrated();
 const { handleNode } = await import('./http/nodeAdapter');
 const port = Number(process.env.PORT || 8787);
 

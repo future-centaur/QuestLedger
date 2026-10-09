@@ -4,7 +4,7 @@
     "version": "0.0.1",
     "type": "module",
     "scripts": {
-        "dev": "vite",
+        "dev": "tsx backend/dev.ts",
         "dev:api": "tsx backend/dev-server.ts",
         "db:schema": "tsx backend/db/apply-schema.ts",
         "cron": "tsx backend/cron-once.ts",

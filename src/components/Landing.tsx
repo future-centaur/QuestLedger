@@ -4,28 +4,25 @@ import type { OAuthProvider } from '../client';
 import { Feature } from './common/Feature';
 
 export function Landing({
-  onLogin,
   error,
-  account,
+  onProvider,
+  onPassword,
+  onSignUp,
 }: {
-  onLogin: () => void;
   error: string;
-  account?: {
-    onProvider: (provider: OAuthProvider) => void;
-    onPassword: (email: string, password: string) => Promise<void>;
-    onSignUp: (email: string, password: string) => Promise<void>;
-  };
+  onProvider: (provider: OAuthProvider) => void;
+  onPassword: (email: string, password: string) => Promise<void>;
+  onSignUp: (email: string, password: string) => Promise<void>;
 }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const submit = async () => {
-    if (!account) return onLogin();
     setBusy(true);
     try {
-      if (creating) await account.onSignUp(email, password);
-      else await account.onPassword(email, password);
+      if (creating) await onSignUp(email, password);
+      else await onPassword(email, password);
     } finally {
       setBusy(false);
     }
@@ -58,7 +55,6 @@ export function Landing({
               and what has already been spent.
             </p>
             <div className="heroActions" id="sign-in">
-              {account ? (
                 <form
                   className="authCard"
                   onSubmit={(event) => {
@@ -67,13 +63,13 @@ export function Landing({
                   }}
                 >
                   <div className="authProviders">
-                    <button type="button" onClick={() => account.onProvider('google')}>
+                    <button type="button" onClick={() => onProvider('google')}>
                       Google
                     </button>
-                    <button type="button" onClick={() => account.onProvider('apple')}>
+                    <button type="button" onClick={() => onProvider('apple')}>
                       Apple
                     </button>
-                    <button type="button" onClick={() => account.onProvider('x')}>
+                    <button type="button" onClick={() => onProvider('x')}>
                       X
                     </button>
                   </div>
@@ -98,11 +94,6 @@ export function Landing({
                     {creating ? 'Have an account? Sign in' : 'New here? Create an account'}
                   </button>
                 </form>
-              ) : (
-                <button className="primary big" onClick={onLogin}>
-                  Start your journey <ChevronRight />
-                </button>
-              )}
               <span>No bank connection required.</span>
             </div>
             {error && <div className="landingError">{error}</div>}

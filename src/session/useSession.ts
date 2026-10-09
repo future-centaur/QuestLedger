@@ -9,7 +9,7 @@ import {
 } from '../../shared/accounting';
 import type { Commitment, Goal, State, User } from '../../shared/types';
 import { createLedgerApi } from '../api/ledger';
-import { authErrorCopy, errorMessage } from '../client';
+import { errorMessage } from '../client';
 import type { OAuthProvider, QuestLedgerClient } from '../client';
 
 export const tabs = [
@@ -96,23 +96,17 @@ export function useSession(client: QuestLedgerClient) {
     }
   };
 
-  const login = async () => {
+  const loginWithProvider = async (provider: OAuthProvider) => {
     setError('');
     try {
-      const r = await client.signIn();
-      setUser(r.user);
+      const result = await client.signInWithProvider(provider);
+      setUser(result.user);
     } catch (e) {
-      setError(authErrorCopy(e));
+      setError(errorMessage(e));
     }
   };
 
-  const loginWithProvider = (provider: OAuthProvider) => {
-    setError('');
-    client.signInWithProvider?.(provider);
-  };
-
   const loginWithPassword = async (email: string, password: string) => {
-    if (!client.signInWithPassword) return;
     setError('');
     try {
       const r = await client.signInWithPassword(email, password);
@@ -123,7 +117,6 @@ export function useSession(client: QuestLedgerClient) {
   };
 
   const signUp = async (email: string, password: string) => {
-    if (!client.signUp) return;
     setError('');
     try {
       const r = await client.signUp(email, password);
@@ -248,11 +241,9 @@ export function useSession(client: QuestLedgerClient) {
     busy,
     error,
     setError,
-    login,
     loginWithProvider,
     loginWithPassword,
     signUp,
-    accountAuth: Boolean(client.signInWithPassword),
     logout,
     xpLevel: progress.level,
     xpIn: progress.into,

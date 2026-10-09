@@ -21,69 +21,36 @@ QuestLedger intentionally tracks assigned/expected balances rather than verified
 
 ## Current architecture
 
-The production app runs on a managed platform that supplies its auth, API, and
-database. The vendor is deliberately not named here: the app reaches it through
-a single interface, so the backend is swappable without touching the product code.
+The app runs as a Vite UI and a Node API, backed by Neon Postgres. The same API process serves local development and Vercel. Sign-in is email and password, or Google, Apple, and X.
 
 ```text
 React + Vite
      │
-     ├── views                         ← components know nothing about transport
-     ├── useSession                    ← auth, snapshot, write-then-refetch
-     ├── Ledger API                    ← the only place HTTP paths are written
-     └── QuestLedgerClient             ← src/client.platform.ts, one file
+     ├── views
+     ├── useSession
+     └── HTTP client
              │
              └── QuestLedger API
                      │
-                     ├── HTTP routes
                      ├── domain (money rules)
-                     └── LedgerStore   ← backend/platform.ts today; Postgres later
+                     └── Neon
 ```
 
 Authentication and every financial API route are user-scoped, so financial records
 are read and written against the signed-in user.
 
-> **Caveat — this is not yet a full isolation guarantee.** `claim()`
-> in `backend/domain/ledger.ts` lists all six tables **unfiltered** and assigns every row
-> lacking an `ownerUserId` to the calling user. It runs on every `GET /api/state`
-> via `defaults()`. For rows that already carry an owner this is a no-op,
-> which is why it has gone unnoticed — but in a multi-user deployment it is a
-> cross-user data-assignment primitive. See
-> [`DECOUPLING_AUDIT.md` §5](./docs/DECOUPLING_AUDIT.md) and decision note `claim()`
-> in [`handoff.md`](./docs/handoff.md). It must not be carried into any new backend.
-
-### Portability status
-
-The provider boundary is in place: the UI depends on the `QuestLedgerClient`
-interface, and exactly one file implements it over the current platform
-(`src/client.platform.ts`). Swapping the backend means replacing that one file.
-
-That work is **in progress, not complete**. The backend still reads and writes
-through the platform SDK, and money-moving routes do read-modify-write without
-database transactions — so the platform still constrains correctness, not just
-deployment. The current gaps, blockers, and migration sequence are tracked in
-[`docs/handoff.md`](./docs/handoff.md).
-
-The repository remains a mirror of the deployed app, so the platform is
-authoritative and GitHub is downstream.
+Money commands run inside a database transaction. Two requests at the same time can still overwrite a balance until the update itself checks the current amount.
 
 ## Local development
 
-The AppDeploy build still needs that host's SDK. This repo can also talk to Neon with no Docker, and the same API deploys to Vercel.
-
-1. Create a Neon project and copy the pooled connection string (the host contains `-pooler`).
-2. Copy [`.env.example`](./.env.example) to `.env` and fill `DATABASE_URL`, `SESSION_SECRET`, `CRON_SECRET`, and `APP_ORIGIN`.
-3. For Google, Apple, or X, register the callback `http://localhost:5173/api/auth/callback/google` (and `apple`, `x`) and put the client secrets in `.env`. Email and password work without those.
-4. Apply the schema and start both processes:
+Fill [`.env`](./.env) from [`.env.example`](./.env.example), then:
 
 ```bash
 npm install
-npm run db:schema
-npm run dev:api
 npm run dev
 ```
 
-`VITE_AUTH=http` makes the UI call this API. Leave it unset for an AppDeploy build. On Vercel, set the same server variables plus `VITE_AUTH=http`. `vercel.json` schedules deductions every five minutes in UTC (a Hobby plan may only allow a daily cron). `npm run cron` runs them once against Neon.
+That applies any pending database migrations, starts the API, and starts the UI at `http://localhost:5173`. On Vercel the API applies those same migrations on startup. `vercel.json` schedules deductions every five minutes in UTC (a Hobby plan may only allow a daily cron). `npm run cron` runs them once against Neon.
 
 Production build:
 
@@ -96,14 +63,14 @@ npm run build
 ```text
 QuestLedger/
 ├── src/
-│   ├── main.tsx                HTTP client when VITE_AUTH=http, otherwise the platform client
+│   ├── main.tsx                starts the UI against the HTTP API
 │   ├── App.tsx                 shell: tabs, modals, which view is showing
 │   ├── session/useSession.ts   auth and the refetch-after-write cycle
 │   ├── api/ledger.ts           named calls; the only HTTP paths in the UI
 │   ├── components/             views, one concern per file
 │   ├── format/display.ts
 │   ├── client.ts               the interface the UI depends on
-│   └── client.platform.ts      its one implementation — the seam
+│   └── client.http.ts          browser client for the API
 ├── shared/
 │   ├── types.ts                types shared by UI and backend
 │   ├── accounting.ts           conservation totals and character stats
@@ -111,19 +78,15 @@ QuestLedger/
 │   └── config.ts               currency, defaults, list caps
 ├── api/                        Vercel function for /api/*
 ├── backend/
-│   ├── index.ts                AppDeploy entry: handler + processCommitments
-│   ├── dev-server.ts           local API
+│   ├── dev.ts                  npm run dev: migrate, API, and Vite
 │   ├── store.neon.ts           Neon LedgerStore
-│   ├── http/routes.ts          auth and status codes, no money rules
-│   ├── domain/                 ledger commands and the due-date calendar
-│   ├── store.ts                persistence port
-│   ├── platform.ts             the only live SDK import
-│   ├── realtime.ts             dead code, not deleted — see handoff step 1
-│   └── realtime-subscribers.ts dead code, same reason
+│   ├── http/                   API handler
+│   ├── db/migrations/          ordered SQL, applied once each
+│   ├── domain/                 ledger commands
+│   └── store.ts                persistence port
 ├── tests/
 │   └── tests.json
 ├── docs/                       decoupling brief, audit, handoff
-├── <platform>.auth-login.json  auth config (filename set by the host)
 ├── index.html
 ├── package.json
 ├── postcss.config.js

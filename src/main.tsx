@@ -2,19 +2,17 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { HttpClient } from './client.http';
-import type { QuestLedgerClient } from './client';
 import './index.css';
 
-async function client(): Promise<QuestLedgerClient> {
-  if (import.meta.env.VITE_AUTH === 'http') return new HttpClient();
-  const { PlatformClient } = await import('./client.platform');
-  return new PlatformClient();
+// OAuth returns in a popup. Tell the original tab, then close.
+if (window.opener && window.opener !== window) {
+  const authError = new URLSearchParams(window.location.search).get('auth_error');
+  window.opener.postMessage({ type: 'questledger-auth', error: authError }, window.location.origin);
+  window.close();
 }
 
-client().then((api) => {
-  createRoot(document.getElementById('root')!).render(
-    <StrictMode>
-      <App client={api} />
-    </StrictMode>,
-  );
-});
+if (!window.opener || window.opener === window) createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App client={new HttpClient()} />
+  </StrictMode>,
+);

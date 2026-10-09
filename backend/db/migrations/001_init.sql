@@ -1,4 +1,4 @@
--- QuestLedger on Neon. Applied once via `npm run db:schema`.
+-- Initial QuestLedger schema. Safe to retry: every object uses IF NOT EXISTS.
 
 CREATE TABLE IF NOT EXISTS users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
