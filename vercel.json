@@ -1,9 +1,12 @@
 {
   "functions": {
-    "api/**/*.ts": {
+    "api/index.ts": {
       "includeFiles": "backend/db/migrations/**"
     }
   },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" }
+  ],
   "crons": [
     {
       "path": "/api/cron/commitments",
