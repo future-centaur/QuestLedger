@@ -2,11 +2,9 @@
 
 **Read this first, then read [`APPDEPLOY_DECOUPLING_BRIEF.md`](./APPDEPLOY_DECOUPLING_BRIEF.md) and [`DECOUPLING_AUDIT.md`](./DECOUPLING_AUDIT.md) in that order.** The brief says why the migration is happening. The audit says what the code actually is. This file says where things stand right now and what to do next.
 
-- **Date:** 2026-10-05, structure updated 2026-10-07 (uncommitted)
-- **Branch:** `appdeploy-decoupling`
-- **Working tree:** domain / HTTP / view split described in §2. Not committed.
-- **Unpushed as of 2026-10-05:** **2** — `4c3c07b` (doc corrections) and `82a7c0a` (steps 2–3). `origin/appdeploy-decoupling` was at `9edacc6`
-- **`main` / `origin/main`:** `a5d48d4`
+- **Date:** 2026-10-14. Sections 1–10 are the decoupling record and are stale about the running app. **Read §11 first.**
+- **Branch:** `main`
+- **Running app:** Vite UI and a Node API on Neon. Production is https://questledger-one.vercel.app. The money-model work in §11 is local until it is pushed.
 
 ---
 
@@ -320,4 +318,32 @@ Plus a baseline that should run before any migration: all **six** `tests/tests.j
 | `src/App.tsx` | 0 errors attributable to these changes. All 896 remaining are TS7026/TS2307 `Cannot find module 'react'` and friends — no `node_modules`. |
 
 **No behaviour change.** Every money edit in the diff is `(p as any).unallocated` → `p.unallocated` — the cast removed, the arithmetic identical. All validation guard clauses and error message strings are untouched. **This has not been run against a deployed build yet** — the six `tests/tests.json` scenarios are the real gate.
+
+---
+
+## 11. Money model as of 2026-10-14
+
+At hand is the sum of three stocks: unallocated money, `saved` on standalone quests that are not archived, and `balance` on commitments. The dashboard shows that total beside the three stocks. `totalHeld` in `shared/accounting.ts` is the formula. Spending removes money from a stock, so at hand falls. Completing a quest does not.
+
+**An expense drains one stock.** `POST /api/expenses` takes an amount, a reason, and a source: `unallocated`, a quest, or a commitment. The amount cannot exceed that stock. Quest spending reduces `saved` and increases `spent`. The last of a quest's saved balance archives it.
+
+**A commitment keeps a budget and a reserve.** The budget (`amount`, for example 300 a day) is the estimate. The reserve is the stock. Each day drains the reserve once:
+
+- Record the real cost and answer **yes** on "Does this make the current cycle spent?": the reserve drops by that actual, the period closes, `nextDueAt` moves forward, and the due date does not also take the budget.
+- Answer **no**: the reserve still drops, the period stays open, and the due date still posts the budget later. That is a spend outside the cycle.
+- Record nothing: when `nextDueAt` has passed, `deductCommitment` posts the budget (or whatever is left, if the reserve is short) and advances the due date.
+
+**True-up.** `POST /api/commitments/true-up` corrects a day a positive `commitment_deduction` already closed. It moves the reserve by `estimate - actual`, sets the period's `spent` to the actual, and writes `commitment_true_up` with `reason: period:<key>`. The due date does not move. A day closed by hand has no estimate to reverse. A second true-up of the same key is rejected. An actual higher than the estimate requires the extra to already be in the reserve. The period row offers **Record actual** only while that deduction is still uncorrected.
+
+**What the commitment shows.** Budget stays the figure you set. Recent cost is the average `spent` of the last seven closed periods. Days of cover is the reserve divided by the forward estimate (`pendingAmount` if Adjust has staged one, otherwise `amount`). Adjust applies from the next cycle and does not rewrite past days.
+
+**Missed days.** `processCommitments` keeps posting overdue cycles, reloading the commitment each pass, until `nextDueAt` is still in the future or nothing advanced. The loop caps at 366 passes. Paused commitments are skipped. A quest deadline does not deduct.
+
+This is local on `main`. It is not what https://questledger-one.vercel.app is running until these commits are pushed.
+
+### Next session: add money, by source
+
+`POST /api/money` only raises unallocated. The form asks "Where is it?" and stores that string on the `money_added` event as `location`. The hint in `src/components/forms/Form.tsx` says the location is context, not a balance. It does not say where the cash came from.
+
+Next time, treat inflow as its own fact. A source (salary, a gift, a sale) should be recorded with the amount, separate from which stock the money then sits in. The point is to see which source brings in the most cash. Do not overload `location` for that. Allocation still decides the stock afterwards.
 
