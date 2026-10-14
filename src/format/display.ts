@@ -1,4 +1,4 @@
-import type { Commitment } from '../../shared/types';
+import type { Commitment, Goal } from '../../shared/types';
 import { currency } from '../../shared/config';
 
 export function money(n: number): string {
@@ -34,6 +34,41 @@ export function cyclesText(c: Commitment): string {
   return full
     ? `${full} full ${c.frequency}${full === 1 ? '' : 's'}${remainder ? ` + ${money(remainder)}` : ''}`
     : `0 full cycles + ${money(remainder)}`;
+}
+
+export function forwardEstimate(c: Commitment): number {
+  return Number(c.pendingAmount ?? c.amount);
+}
+
+export function daysOfCover(c: Commitment): string {
+  const estimate = forwardEstimate(c);
+  const balance = Number(c.balance || 0);
+  if (estimate <= 0 || balance <= 0) return 'Needs funding';
+  const count = Math.round((balance / estimate) * 10) / 10;
+  const unit =
+    c.frequency === 'daily' ? 'day' : c.frequency === 'weekly' ? 'week' : c.frequency === 'monthly' ? 'month' : 'year';
+  return `${count} ${unit}${count === 1 ? '' : 's'}`;
+}
+
+export function runRate(periods: Pick<Goal, 'spent' | 'periodStatus'>[]): number | null {
+  const closed = periods.filter(
+    (p) => (p.periodStatus === 'spent' || p.periodStatus === 'underfunded') && Number(p.spent) > 0,
+  );
+  const recent = closed.slice(0, 7);
+  if (!recent.length) return null;
+  return recent.reduce((sum, p) => sum + Number(p.spent), 0) / recent.length;
+}
+
+export function postedEstimate(
+  periodKey: string,
+  events: { type: string; reason?: string; amount?: number }[],
+): number | null {
+  const reason = 'period:' + periodKey;
+  if (events.some((e) => e.type === 'commitment_true_up' && e.reason === reason)) return null;
+  const deduction = events.find(
+    (e) => e.type === 'commitment_deduction' && e.reason === reason && Number(e.amount) > 0,
+  );
+  return deduction ? Number(deduction.amount) : null;
 }
 
 export function exhaustionText(c: Commitment): string {

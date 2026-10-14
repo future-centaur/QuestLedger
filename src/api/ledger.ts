@@ -18,9 +18,18 @@ export function createLedgerApi(client: QuestLedgerClient) {
     completeGoal: (goalId: string) => client.post('/api/complete', { goalId }),
     spendGoal: (goalId: string, amount: number, reason: string) =>
       client.post('/api/spend', { goalId, amount, reason }),
+    recordExpense: (body: {
+      amount: number;
+      reason: string;
+      source: string;
+      sourceId?: string;
+      closesCycle?: boolean;
+    }) => client.post('/api/expenses', body),
     createCommitment: (body: Record<string, unknown>) => client.post('/api/commitments', body),
     topUpCommitment: (body: Record<string, unknown>) => client.post('/api/commitments/topup', body),
     spendCommitment: (body: Record<string, unknown>) => client.post('/api/commitments/spend', body),
+    trueUpCommitment: (body: { id: string; periodKey: string; amount: number }) =>
+      client.post('/api/commitments/true-up', body),
     rebalanceCommitment: (body: Record<string, unknown>) => client.post('/api/commitments/rebalance', body),
     adjustCommitment: (body: Record<string, unknown>) => client.post('/api/commitments/adjust', body),
     updateCommitment: (body: Record<string, unknown>) => client.post('/api/commitments/update', body),

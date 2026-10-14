@@ -168,6 +168,20 @@ export function useSession(client: QuestLedgerClient) {
   const spend = (g: Goal, amount?: number) =>
     run(() => api.spendGoal(g.id, amount || g.saved, form.reason || ''));
 
+  const recordExpense = () => {
+    const source = form.source || 'unallocated';
+    const [kind, sourceId] = source.split(':');
+    return run(() =>
+      api.recordExpense({
+        amount: Number(form.amount),
+        reason: form.reason || '',
+        source: kind,
+        sourceId,
+        closesCycle: form.closesCycle === 'yes',
+      }),
+    );
+  };
+
   const createCommitment = () =>
     run(() =>
       api.createCommitment({
@@ -225,6 +239,14 @@ export function useSession(client: QuestLedgerClient) {
       }),
     );
   const archiveCommitment = () => run(() => api.archiveCommitment(form.commitmentId));
+  const trueUp = () =>
+    run(() =>
+      api.trueUpCommitment({
+        id: form.commitmentId,
+        periodKey: form.periodKey,
+        amount: Number(form.amount),
+      }),
+    );
   const addNamed = (v?: Record<string, string>) =>
     run(() => (modal === 'account' ? api.addAccount(v?.name || '') : api.addBucket(v?.name || '')));
 
@@ -259,6 +281,7 @@ export function useSession(client: QuestLedgerClient) {
     adjust,
     complete,
     spend,
+    recordExpense,
     createCommitment,
     submitCommitment,
     toggleCommitment,
@@ -267,6 +290,7 @@ export function useSession(client: QuestLedgerClient) {
     archiveQuest,
     updateCommitment,
     archiveCommitment,
+    trueUp,
     addNamed,
   };
 }

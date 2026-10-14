@@ -76,7 +76,7 @@ export function characterStats(input: {
     ['contribution', 'commitment_top_up'].includes(x.type),
   ).length;
   const adjustments = input.events.filter((x) =>
-    ['transfer', 'expense', 'withdrawal', 'spend', 'commitment_spend', 'commitment_deduction'].includes(
+    ['transfer', 'expense', 'withdrawal', 'spend', 'commitment_spend', 'commitment_deduction', 'commitment_true_up'].includes(
       x.type,
     ),
   ).length;

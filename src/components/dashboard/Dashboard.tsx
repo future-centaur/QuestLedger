@@ -10,20 +10,24 @@ export function Dashboard({
   state,
   total,
   goalAllocated,
+  commitmentReserved,
   open,
   newGoal,
   add,
   allocate,
   adjust,
+  expense,
 }: {
   state: State;
   total: number;
   goalAllocated: number;
+  commitmentReserved: number;
   open: (g: Goal) => void;
   newGoal: () => void;
   add: () => void;
   allocate: () => void;
   adjust: () => void;
+  expense: (source?: string) => void;
 }) {
   const h = state.recurringHealth;
   return (
@@ -46,8 +50,8 @@ export function Dashboard({
         </div>
       </section>
       <section className="moneyOverview">
-        <div>
-          <span>Total money</span>
+        <div className="atHand">
+          <span>At hand</span>
           <strong>{money(total)}</strong>
         </div>
         <div>
@@ -55,8 +59,12 @@ export function Dashboard({
           <strong className="lime">{money(state.unallocated)}</strong>
         </div>
         <div>
-          <span>Quest allocations</span>
+          <span>Quests</span>
           <strong>{money(goalAllocated)}</strong>
+        </div>
+        <div>
+          <span>Commitments</span>
+          <strong>{money(commitmentReserved)}</strong>
         </div>
       </section>
       <div className="actions">
@@ -65,6 +73,9 @@ export function Dashboard({
         </button>
         <button onClick={allocate}>
           <Target /> Allocate
+        </button>
+        <button onClick={() => expense()}>
+          <Wallet /> Record expense
         </button>
         <button onClick={newGoal}>
           <Plus /> New quest
@@ -111,7 +122,7 @@ export function Dashboard({
                 open={open}
                 allocate={allocate}
                 complete={() => {}}
-                spend={() => {}}
+                spend={() => expense('goal:' + g.id)}
               />
             ))}
         </div>

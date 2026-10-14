@@ -19,8 +19,7 @@ export function Analytics({
           <p className="eyebrow">SYSTEM VIEW</p>
           <h1>Money architecture</h1>
           <p className="muted">
-            See the distinction between unallocated money, quest allocations and
-            recurring reserves.
+            At hand is unallocated money plus what is stocked in quests and commitments. An expense drains one of those stocks.
           </p>
         </div>
       </div>

@@ -1,6 +1,6 @@
 import { ArrowRightLeft, X, Archive, Pause, Play, MoreHorizontal } from 'lucide-react';
 import type { Goal, Commitment, Event } from '../../../shared/types';
-import { money, dateText, statusFor, cyclesText, exhaustionText } from '../../format/display';
+import { money, dateText, statusFor, cyclesText, daysOfCover, runRate, postedEstimate } from '../../format/display';
 
 export function CommitmentDetail({
   commitment,
@@ -11,6 +11,8 @@ export function CommitmentDetail({
   edit,
   archive,
   toggle,
+  spend,
+  trueUp,
 }: {
   commitment?: Commitment;
   goals: Goal[];
@@ -20,6 +22,8 @@ export function CommitmentDetail({
   edit: (c: Commitment) => void;
   archive: (c: Commitment) => void;
   toggle: (c: Commitment) => void;
+  spend: (c: Commitment) => void;
+  trueUp: (periodKey: string, estimate: number) => void;
 }) {
   if (!commitment) return null;
   const c = commitment,
@@ -27,14 +31,11 @@ export function CommitmentDetail({
       .filter((g) => g.commitmentId === c.id)
       .sort((a, b) => (b.periodKey || "").localeCompare(a.periodKey || ""))
       .slice(0, 8);
-  const es = events
+  const history = events
     .filter((e) => e.commitmentId === c.id)
-    .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
-    .slice(0, 12);
-  const remainingAfter = Math.max(
-    0,
-    Number(c.balance || 0) - Number(c.amount || 0),
-  );
+    .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+  const es = history.slice(0, 12);
+  const recent = runRate(linked);
   return (
     <div className="overlay">
       <div className="modal detailModal">
@@ -72,39 +73,32 @@ export function CommitmentDetail({
             >
               Top up
             </button>
-            <button
-              onClick={() => {
-                openModal("commitmentSpend");
-              }}
-            >
-              Mark spent
-            </button>
+            <button onClick={() => spend(c)}>Record expense</button>
           </div>
         </div>
         <div className="metricGrid">
           <div>
-            <span>Recurring amount</span>
+            <span>Budget</span>
             <b>{money(c.amount)}</b>
-            <small>{c.frequency}</small>
+            <small>
+              {c.frequency}
+              {c.pendingAmount ? ` · next cycle ${money(c.pendingAmount)}` : ""}
+            </small>
           </div>
           <div>
             <span>Next due</span>
             <b>{dateText(c.nextDueAt)}</b>
-            <small>{money(c.amount)} deduction</small>
+            <small>{money(c.pendingAmount ?? c.amount)} if not recorded</small>
           </div>
           <div>
-            <span>After next deduction</span>
-            <b>{money(remainingAfter)}</b>
-            <small>
-              {remainingAfter < c.amount
-                ? "Underfunded next cycle"
-                : "Still funded"}
-            </small>
+            <span>Recent cost</span>
+            <b>{recent === null ? "—" : money(recent)}</b>
+            <small>average of the last 7 closed periods</small>
           </div>
           <div>
-            <span>Projected exhaustion</span>
-            <b>{exhaustionText(c)}</b>
-            <small>if no top-up</small>
+            <span>Days of cover</span>
+            <b>{daysOfCover(c)}</b>
+            <small>forecast from the estimate</small>
           </div>
         </div>
         <div className="detailButtons manageCommit">
@@ -129,15 +123,26 @@ export function CommitmentDetail({
         <h3>Period history</h3>
         {linked.length ? (
           <div className="periodList">
-            {linked.map((g) => (
-              <div className="periodRow" key={g.id}>
-                <div>
-                  <b>{g.periodKey}</b>
-                  <small>{g.periodStatus || g.status}</small>
+            {linked.map((g) => {
+              const estimate = g.periodKey ? postedEstimate(g.periodKey, history) : null;
+              return (
+                <div className="periodRow" key={g.id}>
+                  <div>
+                    <b>{g.periodKey}</b>
+                    <small>{estimate !== null ? "estimate" : g.periodStatus || g.status}</small>
+                  </div>
+                  <strong>{g.spent ? money(g.spent) : money(g.target)}</strong>
+                  {estimate !== null && g.periodKey && (
+                    <button
+                      type="button"
+                      onClick={() => trueUp(g.periodKey as string, Number(g.spent) || estimate)}
+                    >
+                      Record actual
+                    </button>
+                  )}
                 </div>
-                <strong>{g.spent ? money(g.spent) : money(g.target)}</strong>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <p className="muted">No periods recorded yet.</p>

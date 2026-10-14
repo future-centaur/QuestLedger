@@ -145,6 +145,80 @@ export function Form({
         </button>
       </>
     );
+  if (modal === "expense") {
+    const source = form.source || "unallocated";
+    const [kind, id] = source.split(":");
+    const quests = state.goals.filter((g) => isStandalone(g) && g.status !== "archived");
+    const commitments = state.commitments.filter((c) => !c.archived);
+    const commitment = kind === "commitment" ? commitments.find((c) => c.id === id) : undefined;
+    const available =
+      kind === "goal"
+        ? Number(quests.find((g) => g.id === id)?.saved || 0)
+        : kind === "commitment"
+          ? Number(commitment?.balance || 0)
+          : state.unallocated;
+    const amount = parsePositive(form.amount);
+    return (
+      <>
+        <label>
+          Drain from
+          <select
+            value={source}
+            onChange={(e) => setForm({ ...form, source: e.target.value, closesCycle: '' })}
+          >
+            <option value="unallocated">Unallocated · {money(state.unallocated)}</option>
+            {quests.map((g) => (
+              <option key={g.id} value={`goal:${g.id}`}>
+                {g.name} · {money(g.saved)} in quest
+              </option>
+            ))}
+            {commitments.map((c) => (
+              <option key={c.id} value={`commitment:${c.id}`}>
+                {c.name} · {money(c.balance || 0)} reserved
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="available">
+          <span>In this stock</span>
+          <b>{money(available)}</b>
+        </div>
+        {f("amount", "Amount spent", "number")}
+        {f("reason", "What was it for?")}
+        <p className="formHint">
+          {commitment
+            ? `Planned ${money(commitment.amount)} per ${commitment.frequency}. The amount you enter is what leaves the reserve.`
+            : "Allocation fills a stock. An expense drains the one you choose. At hand is what remains in all three."}
+        </p>
+        {commitment && (
+          <div className="cycleChoice">
+            <p>Does this make the current cycle spent?</p>
+            <button
+              type="button"
+              className={form.closesCycle === 'yes' ? 'primary' : ''}
+              onClick={() => setForm({ ...form, closesCycle: 'yes' })}
+            >
+              Yes. Close this cycle. The due date moves on, and the planned amount is not taken as well.
+            </button>
+            <button
+              type="button"
+              className={form.closesCycle === 'no' ? 'primary' : ''}
+              onClick={() => setForm({ ...form, closesCycle: 'no' })}
+            >
+              No. This is outside the cycle. The planned amount still comes out on the due date.
+            </button>
+          </div>
+        )}
+        <button
+          className="primary full"
+          disabled={amount === null || amount > available || busy || (Boolean(commitment) && form.closesCycle !== 'yes' && form.closesCycle !== 'no')}
+          onClick={() => submit()}
+        >
+          Record expense
+        </button>
+      </>
+    );
+  }
   if (modal === "spend")
     return (
       <>
@@ -179,7 +253,7 @@ export function Form({
     return (
       <>
         {f("name", "Commitment name")}
-        {f("amount", "Recurring amount", "number")}
+        {f("amount", "Planned amount per cycle", "number")}
         <div className="formgrid">
           <label>
             Frequency
@@ -519,6 +593,36 @@ export function Form({
         </button>
       </>
     );
+  if (modal === "commitmentTrueUp") {
+    const commitment = state.commitments.find((c) => c.id === form.commitmentId);
+    const estimate = Number(form.estimate || 0);
+    const actual = parsePositive(form.amount);
+    const balance = Number(commitment?.balance || 0);
+    const after = actual === null ? null : balance - (actual - estimate);
+    return (
+      <>
+        <div className="available">
+          <span>Estimate already posted</span>
+          <b>{money(estimate)}</b>
+        </div>
+        {f("amount", "Actual amount", "number")}
+        <div className="available">
+          <span>Reserve after correction</span>
+          <b>{after === null ? "—" : money(after)}</b>
+        </div>
+        <p className="formHint">
+          The estimate is reversed and replaced with this actual. The due date stays where it is.
+        </p>
+        <button
+          className="primary full"
+          disabled={actual === null || after === null || after < 0 || busy}
+          onClick={() => submit()}
+        >
+          Replace estimate
+        </button>
+      </>
+    );
+  }
   if (modal === "commitmentAdjust")
     return (
       <>
@@ -536,7 +640,9 @@ export function Form({
             <option value="yearly">Yearly</option>
           </select>
         </label>
-        <p className="formHint">Changes take effect on the next cycle.</p>
+        <p className="formHint">
+          The new estimate applies from the next cycle. Past days stay as recorded.
+        </p>
         <button
           className="primary full"
           disabled={

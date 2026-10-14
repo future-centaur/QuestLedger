@@ -68,7 +68,7 @@ export function GoalDetail({
             </button>
             {goal.saved > 0 && (
               <button className="spend" onClick={() => spend(goal)}>
-                Mark spent
+                Record expense
               </button>
             )}
             {goal.status !== "archived" && (

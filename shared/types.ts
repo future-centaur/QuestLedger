@@ -133,6 +133,7 @@ export type EventType =
   | 'commitment_top_up'
   | 'commitment_spend'
   | 'commitment_deduction'
+  | 'commitment_true_up'
   | 'commitment_rebalance'
   | 'commitment_amount_change'
   | 'commitment_frequency_change'
@@ -173,6 +174,8 @@ export type State = {
   events: Event[];
   xp: number;
   unallocated: Money;
+  /** Unallocated + quest stocks + commitment reserves. */
+  atHand?: Money;
   stats: Record<string, number>;
   recurringHealth?: RecurringHealth;
 };
