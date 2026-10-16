@@ -129,10 +129,11 @@ export function createLedger(store: LedgerStore) {
   }
 
   async function readState(uid: string) {
-    const [g, b, a, e, p, c] = await Promise.all([
+    const [g, b, a, sources, e, p, c] = await Promise.all([
       store.list<Goal>('goals', { limit: listLimits.goals, filter: { ownerUserId: uid } }),
       store.list('buckets', { limit: listLimits.buckets, filter: { ownerUserId: uid } }),
       store.list('accounts', { limit: listLimits.accounts, filter: { ownerUserId: uid } }),
+      store.list('sources', { limit: listLimits.sources, filter: { ownerUserId: uid } }),
       store.list<Event>('events', { limit: listLimits.events, filter: { ownerUserId: uid } }),
       store.list<Profile>('profile', { limit: listLimits.profile, filter: { ownerUserId: uid } }),
       store.list<Commitment>('commitments', { limit: listLimits.commitments, filter: { ownerUserId: uid } }),
@@ -156,6 +157,7 @@ export function createLedger(store: LedgerStore) {
       goals: g.items,
       accounts: a.items,
       buckets: b.items,
+      sources: sources.items,
       commitments,
       events,
       unallocated,
@@ -294,6 +296,8 @@ export function createLedger(store: LedgerStore) {
   async function addMoney(uid: string, body: any): Promise<Outcome<{ ok: true }>> {
     const n = parsePositive(body.amount);
     if (n === null) return fail('Enter a positive amount', 400);
+    const source = typeof body.source === 'string' ? body.source.trim() : '';
+    if (!source) return fail('Source name required', 400);
     const p = await profile(uid);
     if (!p) return fail('Profile unavailable', 500);
     const updated = await store.update('profile', [
@@ -303,7 +307,8 @@ export function createLedger(store: LedgerStore) {
     const id = await event(uid, {
       type: 'money_added',
       amount: n,
-      location: body.location || '',
+      source,
+      location: typeof body.location === 'string' ? body.location.trim() : '',
       createdAt: new Date().toISOString(),
     });
     if (!id) return fail('Money was added but its history event failed', 500);
@@ -879,10 +884,32 @@ export function createLedger(store: LedgerStore) {
     return ok({ ok: true });
   }
 
-  async function addAccount(uid: string, body: any): Promise<Outcome<{ id: string }>> {
-    if (!body.name) return fail('Account name required', 400);
-    const [id] = await store.add('accounts', [{ name: body.name, ownerUserId: uid }]);
-    return id ? ok({ id }) : fail('Could not add account', 500);
+  async function saveName(
+    uid: string,
+    table: 'accounts' | 'sources',
+    body: any,
+    missing: string,
+    failed: string,
+  ): Promise<Outcome<{ id: string; name: string }>> {
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name) return fail(missing, 400);
+    const limit = table === 'accounts' ? listLimits.accounts : listLimits.sources;
+    const existing = await store.list<{ id: string; name: string }>(table, {
+      limit,
+      filter: { ownerUserId: uid },
+    });
+    const found = existing.items.find((row) => row.name.trim().toLowerCase() === name.toLowerCase());
+    if (found?.id) return ok({ id: found.id, name: found.name });
+    const [id] = await store.add(table, [{ name, ownerUserId: uid }]);
+    return id ? ok({ id, name }) : fail(failed, 500);
+  }
+
+  async function addAccount(uid: string, body: any): Promise<Outcome<{ id: string; name: string }>> {
+    return saveName(uid, 'accounts', body, 'Account name required', 'Could not add account');
+  }
+
+  async function addSource(uid: string, body: any): Promise<Outcome<{ id: string; name: string }>> {
+    return saveName(uid, 'sources', body, 'Source name required', 'Could not add source');
   }
 
   async function addBucket(uid: string, body: any): Promise<Outcome<{ id: string }>> {
@@ -914,6 +941,7 @@ export function createLedger(store: LedgerStore) {
     spendGoal,
     rebalance,
     addAccount,
+    addSource,
     addBucket,
   };
 }

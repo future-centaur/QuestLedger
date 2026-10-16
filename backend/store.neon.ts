@@ -21,6 +21,11 @@ const columns: Record<string, Record<string, { column: string; kind: Kind }>> = 
     ownerUserId: { column: 'owner_user_id', kind: 'id' },
     name: { column: 'name', kind: 'text' },
   },
+  sources: {
+    id: { column: 'id', kind: 'id' },
+    ownerUserId: { column: 'owner_user_id', kind: 'id' },
+    name: { column: 'name', kind: 'text' },
+  },
   goals: {
     id: { column: 'id', kind: 'id' },
     ownerUserId: { column: 'owner_user_id', kind: 'id' },
@@ -68,6 +73,7 @@ const columns: Record<string, Record<string, { column: string; kind: Kind }>> = 
     createdAt: { column: 'created_at', kind: 'time' },
     reason: { column: 'reason', kind: 'text' },
     location: { column: 'location', kind: 'text' },
+    source: { column: 'source', kind: 'text' },
   },
 };
 

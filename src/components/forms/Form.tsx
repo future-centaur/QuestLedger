@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { Plus } from 'lucide-react';
 import type { State } from '../../../shared/types';
 import { isStandalone } from '../../../shared/types';
 import { parsePositive } from '../../../shared/money';
@@ -10,6 +12,7 @@ export function Form({
   state,
   submit,
   busy,
+  addInPlace,
 }: {
   modal: string;
   form: Record<string, string>;
@@ -17,7 +20,71 @@ export function Form({
   state: State;
   submit: (v?: Record<string, string>) => void;
   busy: boolean;
+  addInPlace?: (field: 'source' | 'location', name: string) => Promise<void>;
 }) {
+  const [adding, setAdding] = useState<null | 'source' | 'location'>(null);
+  const [draftName, setDraftName] = useState('');
+  const saveDraft = async (field: 'source' | 'location') => {
+    if (!addInPlace) return;
+    try {
+      await addInPlace(field, draftName);
+      setAdding(null);
+      setDraftName('');
+    } catch {
+      /* The session already shows the error. */
+    }
+  };
+  const picker = (field: 'source' | 'location', label: string, empty: string) => {
+    const options = field === 'source' ? state.sources : state.accounts;
+    const open = adding === field;
+    return (
+      <div key={field}>
+        <label>
+          {label}
+          <span className="pickerRow">
+            <select
+              value={form[field] || ''}
+              onChange={(e) => setForm({ ...form, [field]: e.target.value })}
+            >
+              <option value="">{empty}</option>
+              {options.map((row) => (
+                <option key={row.id} value={row.name}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="pickerPlus"
+              aria-label={field === 'source' ? 'Add source' : 'Add location'}
+              disabled={busy}
+              onClick={() => {
+                setAdding(open ? null : field);
+                setDraftName('');
+              }}
+            >
+              <Plus />
+            </button>
+          </span>
+        </label>
+        {open && (
+          <>
+            <label>
+              {field === 'source' ? 'New source' : 'New location'}
+              <input value={draftName} onChange={(e) => setDraftName(e.target.value)} />
+            </label>
+            <button
+              className="primary"
+              disabled={!draftName.trim() || busy}
+              onClick={() => void saveDraft(field)}
+            >
+              Save
+            </button>
+          </>
+        )}
+      </div>
+    );
+  };
   const f = (k: string, l: string, t = "text") => (
     <label>
       {l}
@@ -44,14 +111,16 @@ export function Form({
     return (
       <>
         {f("amount", "Amount to add", "number")}
-        {f("location", "Where is it?")}
+        {picker("source", "Where did it come from?", "Choose a source")}
+        {picker("location", "Where is it?", "Optional location")}
         <p className="formHint">
-          This increases unallocated money. The location is context, not a
-          separate bank balance.
+          This increases unallocated money. The source is where the cash came
+          from. The location is where it sits, and it is context, not a
+          separate balance. Allocate afterwards to choose the stock.
         </p>
         <button
           className="primary full"
-          disabled={parsePositive(form.amount) === null || busy}
+          disabled={parsePositive(form.amount) === null || !form.source || busy}
           onClick={() => submit()}
         >
           Add {form.amount ? money(Number(form.amount)) : "money"}
@@ -726,7 +795,10 @@ export function Form({
     );
   return (
     <>
-      {f("name", modal === "account" ? "Account/location name" : "Bucket name")}
+      {f(
+        "name",
+        modal === "account" ? "Account/location name" : modal === "source" ? "Source name" : "Bucket name",
+      )}
       <button
         className="primary full"
         disabled={!form.name || busy}

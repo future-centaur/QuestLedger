@@ -13,6 +13,7 @@ const empty: State = {
   goals: [],
   accounts: [],
   buckets: [],
+  sources: [],
   commitments: [],
   events: [],
   xp: 0,

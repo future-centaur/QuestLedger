@@ -27,6 +27,7 @@ const titles: Record<string, string> = {
   goalTarget: 'Adjust Quest Target',
   goalArchive: 'Archive Quest',
   money: 'Add Unallocated Money',
+  source: 'Add Source',
   contribute: 'Allocate Money',
   rebalance: 'Adjust Allocation',
   commitment: 'New Recurring Commitment',
@@ -70,6 +71,7 @@ export default function App({ client }: { client: QuestLedgerClient }) {
     create,
     allocate,
     addMoney,
+    addInPlace,
     adjust,
     complete,
     recordExpense,
@@ -220,6 +222,10 @@ export default function App({ client }: { client: QuestLedgerClient }) {
               setForm({});
               setModal('account');
             }}
+            addSource={() => {
+              setForm({});
+              setModal('source');
+            }}
           />
         )}
       </main>
@@ -322,6 +328,7 @@ export default function App({ client }: { client: QuestLedgerClient }) {
               form={form}
               setForm={setForm}
               state={state}
+              addInPlace={addInPlace}
               submit={
                 modal === 'goal'
                   ? create

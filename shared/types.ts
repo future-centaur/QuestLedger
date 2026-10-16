@@ -29,6 +29,8 @@ export type Money = number;
 
 export type Account = { id: string; name: string };
 export type Bucket = { id: string; name: string };
+/** Where cash came from. A name only — it holds no money. */
+export type Source = { id: string; name: string };
 
 /** 1:1 with user. Reached via `as any` in the backend at 11 sites today. */
 export type Profile = {
@@ -153,6 +155,8 @@ export type Event = {
   createdAt: string;
   reason?: string;
   location?: string;
+  /** Origin of a `money_added` inflow. Empty on older rows. */
+  source?: string;
   /** Resolved at read time in `getState()` for timeline display. */
   fromName?: string;
   toName?: string;
@@ -170,6 +174,7 @@ export type State = {
   goals: Goal[];
   accounts: Account[];
   buckets: Bucket[];
+  sources: Source[];
   commitments: Commitment[];
   events: Event[];
   xp: number;

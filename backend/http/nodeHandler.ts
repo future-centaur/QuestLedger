@@ -38,6 +38,7 @@ const commands = {
   'POST /api/expenses': (uid: string, body: unknown) => ledger.recordExpense(uid, body),
   'POST /api/rebalance': (uid: string, body: unknown) => ledger.rebalance(uid, body),
   'POST /api/accounts': (uid: string, body: unknown) => ledger.addAccount(uid, body),
+  'POST /api/sources': (uid: string, body: unknown) => ledger.addSource(uid, body),
   'POST /api/buckets': (uid: string, body: unknown) => ledger.addBucket(uid, body),
 } as Record<string, (uid: string, body: unknown) => Promise<Outcome<unknown>>>;
 
