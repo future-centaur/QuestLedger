@@ -27,6 +27,7 @@ const empty: State = {
   goals: [],
   accounts: [],
   buckets: [],
+  sources: [],
   commitments: [],
   events: [],
   xp: 0,
@@ -150,7 +151,23 @@ export function useSession(client: QuestLedgerClient) {
 
   const allocate = () => run(() => api.contribute(form.goalId, Number(form.amount)));
 
-  const addMoney = () => run(() => api.addMoney(Number(form.amount), form.location || ''));
+  const addMoney = () =>
+    run(() => api.addMoney(Number(form.amount), form.location || '', form.source || ''));
+
+  const addInPlace = async (field: 'source' | 'location', name: string) => {
+    setBusy(true);
+    setError('');
+    try {
+      const saved = field === 'location' ? await api.addAccount(name) : await api.addSource(name);
+      await load();
+      setForm((current) => ({ ...current, [field]: saved.data.name }));
+    } catch (e) {
+      setError(errorMessage(e));
+      throw e;
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const adjust = () =>
     run(() =>
@@ -167,6 +184,20 @@ export function useSession(client: QuestLedgerClient) {
 
   const spend = (g: Goal, amount?: number) =>
     run(() => api.spendGoal(g.id, amount || g.saved, form.reason || ''));
+
+  const recordExpense = () => {
+    const source = form.source || 'unallocated';
+    const [kind, sourceId] = source.split(':');
+    return run(() =>
+      api.recordExpense({
+        amount: Number(form.amount),
+        reason: form.reason || '',
+        source: kind,
+        sourceId,
+        closesCycle: form.closesCycle === 'yes',
+      }),
+    );
+  };
 
   const createCommitment = () =>
     run(() =>
@@ -225,8 +256,22 @@ export function useSession(client: QuestLedgerClient) {
       }),
     );
   const archiveCommitment = () => run(() => api.archiveCommitment(form.commitmentId));
+  const trueUp = () =>
+    run(() =>
+      api.trueUpCommitment({
+        id: form.commitmentId,
+        periodKey: form.periodKey,
+        amount: Number(form.amount),
+      }),
+    );
   const addNamed = (v?: Record<string, string>) =>
-    run(() => (modal === 'account' ? api.addAccount(v?.name || '') : api.addBucket(v?.name || '')));
+    run(() =>
+      modal === 'account'
+        ? api.addAccount(v?.name || '')
+        : modal === 'source'
+          ? api.addSource(v?.name || '')
+          : api.addBucket(v?.name || ''),
+    );
 
   return {
     user,
@@ -256,9 +301,11 @@ export function useSession(client: QuestLedgerClient) {
     create,
     allocate,
     addMoney,
+    addInPlace,
     adjust,
     complete,
     spend,
+    recordExpense,
     createCommitment,
     submitCommitment,
     toggleCommitment,
@@ -267,6 +314,7 @@ export function useSession(client: QuestLedgerClient) {
     archiveQuest,
     updateCommitment,
     archiveCommitment,
+    trueUp,
     addNamed,
   };
 }

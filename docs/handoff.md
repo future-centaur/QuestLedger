@@ -1,14 +1,70 @@
 # QuestLedger — Handoff
 
-**Read this first, then read [`APPDEPLOY_DECOUPLING_BRIEF.md`](./APPDEPLOY_DECOUPLING_BRIEF.md) and [`DECOUPLING_AUDIT.md`](./DECOUPLING_AUDIT.md) in that order.** The brief says why the migration is happening. The audit says what the code actually is. This file says where things stand right now and what to do next.
-
-- **Date:** 2026-10-05, structure updated 2026-10-07 (uncommitted)
-- **Branch:** `appdeploy-decoupling`
-- **Working tree:** domain / HTTP / view split described in §2. Not committed.
-- **Unpushed as of 2026-10-05:** **2** — `4c3c07b` (doc corrections) and `82a7c0a` (steps 2–3). `origin/appdeploy-decoupling` was at `9edacc6`
-- **`main` / `origin/main`:** `a5d48d4`
+Newest session first. When a session ends, prepend a dated block above the previous one. Read downward for older work.
 
 ---
+
+## 2026-10-16 — Arrival totals, and keep the envelope
+
+Branch `main`. Local until it is pushed. Production is still https://questledger-one.vercel.app.
+
+Inflow now carries a saved **source** (where the cash came from) and an optional **location** (where it arrived). Both are name lists. The add-money form picks them from dropdowns, and a plus on each field saves a new name without closing the form. Analytics ranks cash by source and by location from `money_added` totals. A blank source shows as Unrecorded. A blank location shows as Unspecified. A saved location with no inflow shows zero.
+
+A location total is every inflow recorded there, added up and left as it is. Allocating, topping up, and spending do not move it. It is the running total of money that has arrived at that place. It is not how much is still there. A live location figure would be necessary only when a pull has to depend on cash still sitting in that place. A bank or M-Pesa feed is a later check against the outside account, and it does not create that need.
+
+**Envelope ledger.** The three stocks are the balances: unallocated, quest `saved`, and commitment `balance`. The user assigns money to a job. The books are right when they match that decision. If assigned money is spent another way, the user records it. The app will not discover the spend.
+
+**Bookkeeping software that has quests.** Each movement is a debit and a credit, and the balance is the sum of those entries. Cash is checked against what the real account says is there. A payment the user never assigned still has to be posted, then matched to an envelope. Location would be an account with a statement. The quests would be categories on top of that journal.
+
+Stay an envelope ledger. Do not turn this into bookkeeping software.
+
+### Next: make the envelope ledger honest
+
+The product already claims that assigned money is conserved and that the history matches the stocks. Three holes break that claim:
+
+- Two requests can overwrite the same balance. A command reads the amount and writes the result. A second request can read the same amount before the first commits, and the last write wins.
+- Amounts are `numeric(14,2)` in Postgres and floating-point once they enter the app. The screen rounds to a whole shilling, so a cent that was entered can drift from the cent that is stored.
+- The stocks are stored on their own, and the events are a history beside them. Nothing checks that unallocated, quests, and commitments still equal that history.
+
+Fix those three. Leave debits, credits, and a tie-out to a real account alone.
+
+---
+
+## 2026-10-15 — Add money, by source
+
+Branch `main`. Local until it is pushed.
+
+`POST /api/money` still only raises unallocated. The amount is recorded with a saved **source** on the `money_added` event. Location stays optional context, chosen from saved accounts, and it is still not a balance. Allocation afterwards still chooses the stock.
+
+Sources are a name list, the same shape as accounts, and they hold no money. The money modal picks a source and a location from those lists. A plus on each field saves a new name without closing the modal or clearing the amount. Analytics can add either name too, and it ranks cash by source and by location from `money_added` totals. A location total is the cash recorded there, not a separate balance. Older inflows with no source show as Unrecorded. A repeated name is kept once.
+
+---
+
+## 2026-10-14 — Stocks, expenses, and commitment true-up
+
+Branch `main`. The running app is a Vite UI and a Node API on Neon. Production is https://questledger-one.vercel.app. This money-model work is local until it is pushed.
+
+At hand is the sum of three stocks: unallocated money, `saved` on standalone quests that are not archived, and `balance` on commitments. The dashboard shows that total beside the three stocks. `totalHeld` in `shared/accounting.ts` is the formula. Spending removes money from a stock, so at hand falls. Completing a quest does not.
+
+**An expense drains one stock.** `POST /api/expenses` takes an amount, a reason, and a source: `unallocated`, a quest, or a commitment. The amount cannot exceed that stock. Quest spending reduces `saved` and increases `spent`. The last of a quest's saved balance archives it.
+
+**A commitment keeps a budget and a reserve.** The budget (`amount`, for example 300 a day) is the estimate. The reserve is the stock. Each day drains the reserve once:
+
+- Record the real cost and answer **yes** on "Does this make the current cycle spent?": the reserve drops by that actual, the period closes, `nextDueAt` moves forward, and the due date does not also take the budget.
+- Answer **no**: the reserve still drops, the period stays open, and the due date still posts the budget later. That is a spend outside the cycle.
+- Record nothing: when `nextDueAt` has passed, `deductCommitment` posts the budget (or whatever is left, if the reserve is short) and advances the due date.
+
+**True-up.** `POST /api/commitments/true-up` corrects a day a positive `commitment_deduction` already closed. It moves the reserve by `estimate - actual`, sets the period's `spent` to the actual, and writes `commitment_true_up` with `reason: period:<key>`. The due date does not move. A day closed by hand has no estimate to reverse. A second true-up of the same key is rejected. An actual higher than the estimate requires the extra to already be in the reserve. The period row offers **Record actual** only while that deduction is still uncorrected.
+
+**What the commitment shows.** Budget stays the figure you set. Recent cost is the average `spent` of the last seven closed periods. Days of cover is the reserve divided by the forward estimate (`pendingAmount` if Adjust has staged one, otherwise `amount`). Adjust applies from the next cycle and does not rewrite past days.
+
+**Missed days.** `processCommitments` keeps posting overdue cycles, reloading the commitment each pass, until `nextDueAt` is still in the future or nothing advanced. The loop caps at 366 passes. Paused commitments are skipped. A quest deadline does not deduct.
+
+---
+
+## Earlier — decoupling handoff (2026-10-05 to 2026-10-07)
+
+**Then read [`APPDEPLOY_DECOUPLING_BRIEF.md`](./APPDEPLOY_DECOUPLING_BRIEF.md) and [`DECOUPLING_AUDIT.md`](./DECOUPLING_AUDIT.md).** The brief says why the migration happened. The audit says what the code was. The sections below are that record. They are stale about the running app.
 
 ## 1. What this app is
 

@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { Plus } from 'lucide-react';
 import type { State } from '../../../shared/types';
 import { isStandalone } from '../../../shared/types';
 import { parsePositive } from '../../../shared/money';
@@ -10,6 +12,7 @@ export function Form({
   state,
   submit,
   busy,
+  addInPlace,
 }: {
   modal: string;
   form: Record<string, string>;
@@ -17,7 +20,71 @@ export function Form({
   state: State;
   submit: (v?: Record<string, string>) => void;
   busy: boolean;
+  addInPlace?: (field: 'source' | 'location', name: string) => Promise<void>;
 }) {
+  const [adding, setAdding] = useState<null | 'source' | 'location'>(null);
+  const [draftName, setDraftName] = useState('');
+  const saveDraft = async (field: 'source' | 'location') => {
+    if (!addInPlace) return;
+    try {
+      await addInPlace(field, draftName);
+      setAdding(null);
+      setDraftName('');
+    } catch {
+      /* The session already shows the error. */
+    }
+  };
+  const picker = (field: 'source' | 'location', label: string, empty: string) => {
+    const options = field === 'source' ? state.sources : state.accounts;
+    const open = adding === field;
+    return (
+      <div key={field}>
+        <label>
+          {label}
+          <span className="pickerRow">
+            <select
+              value={form[field] || ''}
+              onChange={(e) => setForm({ ...form, [field]: e.target.value })}
+            >
+              <option value="">{empty}</option>
+              {options.map((row) => (
+                <option key={row.id} value={row.name}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="pickerPlus"
+              aria-label={field === 'source' ? 'Add source' : 'Add location'}
+              disabled={busy}
+              onClick={() => {
+                setAdding(open ? null : field);
+                setDraftName('');
+              }}
+            >
+              <Plus />
+            </button>
+          </span>
+        </label>
+        {open && (
+          <>
+            <label>
+              {field === 'source' ? 'New source' : 'New location'}
+              <input value={draftName} onChange={(e) => setDraftName(e.target.value)} />
+            </label>
+            <button
+              className="primary"
+              disabled={!draftName.trim() || busy}
+              onClick={() => void saveDraft(field)}
+            >
+              Save
+            </button>
+          </>
+        )}
+      </div>
+    );
+  };
   const f = (k: string, l: string, t = "text") => (
     <label>
       {l}
@@ -44,14 +111,16 @@ export function Form({
     return (
       <>
         {f("amount", "Amount to add", "number")}
-        {f("location", "Where is it?")}
+        {picker("source", "Where did it come from?", "Choose a source")}
+        {picker("location", "Where is it?", "Optional location")}
         <p className="formHint">
-          This increases unallocated money. The location is context, not a
-          separate bank balance.
+          This increases unallocated money. The source is where the cash came
+          from. The location is where it sits, and it is context, not a
+          separate balance. Allocate afterwards to choose the stock.
         </p>
         <button
           className="primary full"
-          disabled={parsePositive(form.amount) === null || busy}
+          disabled={parsePositive(form.amount) === null || !form.source || busy}
           onClick={() => submit()}
         >
           Add {form.amount ? money(Number(form.amount)) : "money"}
@@ -145,6 +214,80 @@ export function Form({
         </button>
       </>
     );
+  if (modal === "expense") {
+    const source = form.source || "unallocated";
+    const [kind, id] = source.split(":");
+    const quests = state.goals.filter((g) => isStandalone(g) && g.status !== "archived");
+    const commitments = state.commitments.filter((c) => !c.archived);
+    const commitment = kind === "commitment" ? commitments.find((c) => c.id === id) : undefined;
+    const available =
+      kind === "goal"
+        ? Number(quests.find((g) => g.id === id)?.saved || 0)
+        : kind === "commitment"
+          ? Number(commitment?.balance || 0)
+          : state.unallocated;
+    const amount = parsePositive(form.amount);
+    return (
+      <>
+        <label>
+          Drain from
+          <select
+            value={source}
+            onChange={(e) => setForm({ ...form, source: e.target.value, closesCycle: '' })}
+          >
+            <option value="unallocated">Unallocated · {money(state.unallocated)}</option>
+            {quests.map((g) => (
+              <option key={g.id} value={`goal:${g.id}`}>
+                {g.name} · {money(g.saved)} in quest
+              </option>
+            ))}
+            {commitments.map((c) => (
+              <option key={c.id} value={`commitment:${c.id}`}>
+                {c.name} · {money(c.balance || 0)} reserved
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="available">
+          <span>In this stock</span>
+          <b>{money(available)}</b>
+        </div>
+        {f("amount", "Amount spent", "number")}
+        {f("reason", "What was it for?")}
+        <p className="formHint">
+          {commitment
+            ? `Planned ${money(commitment.amount)} per ${commitment.frequency}. The amount you enter is what leaves the reserve.`
+            : "Allocation fills a stock. An expense drains the one you choose. At hand is what remains in all three."}
+        </p>
+        {commitment && (
+          <div className="cycleChoice">
+            <p>Does this make the current cycle spent?</p>
+            <button
+              type="button"
+              className={form.closesCycle === 'yes' ? 'primary' : ''}
+              onClick={() => setForm({ ...form, closesCycle: 'yes' })}
+            >
+              Yes. Close this cycle. The due date moves on, and the planned amount is not taken as well.
+            </button>
+            <button
+              type="button"
+              className={form.closesCycle === 'no' ? 'primary' : ''}
+              onClick={() => setForm({ ...form, closesCycle: 'no' })}
+            >
+              No. This is outside the cycle. The planned amount still comes out on the due date.
+            </button>
+          </div>
+        )}
+        <button
+          className="primary full"
+          disabled={amount === null || amount > available || busy || (Boolean(commitment) && form.closesCycle !== 'yes' && form.closesCycle !== 'no')}
+          onClick={() => submit()}
+        >
+          Record expense
+        </button>
+      </>
+    );
+  }
   if (modal === "spend")
     return (
       <>
@@ -179,7 +322,7 @@ export function Form({
     return (
       <>
         {f("name", "Commitment name")}
-        {f("amount", "Recurring amount", "number")}
+        {f("amount", "Planned amount per cycle", "number")}
         <div className="formgrid">
           <label>
             Frequency
@@ -519,6 +662,36 @@ export function Form({
         </button>
       </>
     );
+  if (modal === "commitmentTrueUp") {
+    const commitment = state.commitments.find((c) => c.id === form.commitmentId);
+    const estimate = Number(form.estimate || 0);
+    const actual = parsePositive(form.amount);
+    const balance = Number(commitment?.balance || 0);
+    const after = actual === null ? null : balance - (actual - estimate);
+    return (
+      <>
+        <div className="available">
+          <span>Estimate already posted</span>
+          <b>{money(estimate)}</b>
+        </div>
+        {f("amount", "Actual amount", "number")}
+        <div className="available">
+          <span>Reserve after correction</span>
+          <b>{after === null ? "—" : money(after)}</b>
+        </div>
+        <p className="formHint">
+          The estimate is reversed and replaced with this actual. The due date stays where it is.
+        </p>
+        <button
+          className="primary full"
+          disabled={actual === null || after === null || after < 0 || busy}
+          onClick={() => submit()}
+        >
+          Replace estimate
+        </button>
+      </>
+    );
+  }
   if (modal === "commitmentAdjust")
     return (
       <>
@@ -536,7 +709,9 @@ export function Form({
             <option value="yearly">Yearly</option>
           </select>
         </label>
-        <p className="formHint">Changes take effect on the next cycle.</p>
+        <p className="formHint">
+          The new estimate applies from the next cycle. Past days stay as recorded.
+        </p>
         <button
           className="primary full"
           disabled={
@@ -620,7 +795,10 @@ export function Form({
     );
   return (
     <>
-      {f("name", modal === "account" ? "Account/location name" : "Bucket name")}
+      {f(
+        "name",
+        modal === "account" ? "Account/location name" : modal === "source" ? "Source name" : "Bucket name",
+      )}
       <button
         className="primary full"
         disabled={!form.name || busy}

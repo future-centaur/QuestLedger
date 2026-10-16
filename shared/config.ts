@@ -37,6 +37,7 @@ export const listLimits = {
   profile: 1,
   buckets: 50,
   accounts: 50,
+  sources: 50,
   /** Cron walks profiles until this cap, then stops. */
   cronProfiles: 500,
 } as const;

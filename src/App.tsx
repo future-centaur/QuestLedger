@@ -27,6 +27,7 @@ const titles: Record<string, string> = {
   goalTarget: 'Adjust Quest Target',
   goalArchive: 'Archive Quest',
   money: 'Add Unallocated Money',
+  source: 'Add Source',
   contribute: 'Allocate Money',
   rebalance: 'Adjust Allocation',
   commitment: 'New Recurring Commitment',
@@ -35,8 +36,10 @@ const titles: Record<string, string> = {
   bucket: 'Add Bucket',
   commitmentTopup: 'Top up commitment',
   commitmentSpend: 'Mark commitment money spent',
+  expense: 'Record an expense',
   commitmentRebalance: 'Rebalance commitment',
   commitmentAdjust: 'Adjust commitment',
+  commitmentTrueUp: 'Record the actual',
 };
 
 export default function App({ client }: { client: QuestLedgerClient }) {
@@ -61,15 +64,17 @@ export default function App({ client }: { client: QuestLedgerClient }) {
     xpIn,
     xpPerLevel,
     goalAllocated,
+    commitmentReserved,
     totalMoney,
     activeGoals,
     archives,
     create,
     allocate,
     addMoney,
+    addInPlace,
     adjust,
     complete,
-    spend,
+    recordExpense,
     createCommitment,
     submitCommitment,
     toggleCommitment,
@@ -78,6 +83,7 @@ export default function App({ client }: { client: QuestLedgerClient }) {
     archiveQuest,
     updateCommitment,
     archiveCommitment,
+    trueUp,
     addNamed,
   } = useSession(client);
 
@@ -100,7 +106,7 @@ export default function App({ client }: { client: QuestLedgerClient }) {
     );
 
   const openGoal = (id: string) => setModal('detail:' + id);
-  const commitmentActions = ['commitmentTopup', 'commitmentSpend', 'commitmentRebalance', 'commitmentAdjust'];
+  const commitmentActions = ['commitmentTopup', 'commitmentSpend', 'commitmentRebalance', 'commitmentAdjust', 'commitmentTrueUp'];
 
   return (
     <div className="shell">
@@ -140,6 +146,7 @@ export default function App({ client }: { client: QuestLedgerClient }) {
             state={state}
             total={totalMoney}
             goalAllocated={goalAllocated}
+            commitmentReserved={commitmentReserved}
             open={(g) => openGoal(g.id)}
             newGoal={() => {
               setForm({});
@@ -157,6 +164,10 @@ export default function App({ client }: { client: QuestLedgerClient }) {
               setForm({});
               setModal('rebalance');
             }}
+            expense={(source) => {
+              setForm({ source: source || 'unallocated' });
+              setModal('expense');
+            }}
           />
         )}
         {tab === 'goals' && (
@@ -173,8 +184,8 @@ export default function App({ client }: { client: QuestLedgerClient }) {
             }}
             complete={complete}
             spend={(g) => {
-              setForm({ goalId: g.id });
-              setModal('spend:' + g.id);
+              setForm({ source: 'goal:' + g.id });
+              setModal('expense');
             }}
           />
         )}
@@ -210,6 +221,10 @@ export default function App({ client }: { client: QuestLedgerClient }) {
             addAccount={() => {
               setForm({});
               setModal('account');
+            }}
+            addSource={() => {
+              setForm({});
+              setModal('source');
             }}
           />
         )}
@@ -263,21 +278,10 @@ export default function App({ client }: { client: QuestLedgerClient }) {
             setModal('contribute');
           }}
           spend={(g) => {
-            setForm({ goalId: g.id });
-            setModal('spend:' + g.id);
+            setForm({ source: 'goal:' + g.id });
+            setModal('expense');
           }}
         />
-      ) : modal?.startsWith('spend:') ? (
-        <Modal title="Mark money as spent" close={() => setModal(null)}>
-          <Form
-            modal="spend"
-            form={form}
-            setForm={setForm}
-            state={state}
-            submit={() => spend(state.goals.find((g) => g.id === modal.slice(6))!, Number(form.amount))}
-            busy={busy}
-          />
-        </Modal>
       ) : modal === 'commitmentDetail' ? (
         <CommitmentDetail
           commitment={state.commitments.find((c) => c.id === form.commitmentId)}
@@ -300,6 +304,19 @@ export default function App({ client }: { client: QuestLedgerClient }) {
             setModal('commitmentArchive');
           }}
           toggle={toggleCommitment}
+          spend={(c) => {
+            setForm({ source: 'commitment:' + c.id, commitmentId: c.id });
+            setModal('expense');
+          }}
+          trueUp={(periodKey, estimate) => {
+            setForm({
+              commitmentId: form.commitmentId,
+              periodKey,
+              estimate: String(estimate),
+              amount: '',
+            });
+            setModal('commitmentTrueUp');
+          }}
         />
       ) : (
         modal &&
@@ -311,6 +328,7 @@ export default function App({ client }: { client: QuestLedgerClient }) {
               form={form}
               setForm={setForm}
               state={state}
+              addInPlace={addInPlace}
               submit={
                 modal === 'goal'
                   ? create
@@ -324,9 +342,11 @@ export default function App({ client }: { client: QuestLedgerClient }) {
                           ? addMoney
                           : modal === 'contribute'
                             ? allocate
-                            : modal === 'rebalance'
+                              : modal === 'rebalance'
                               ? adjust
-                              : modal === 'commitment'
+                              : modal === 'expense'
+                                ? recordExpense
+                                : modal === 'commitment'
                                 ? createCommitment
                                 : modal === 'commitmentEdit'
                                   ? updateCommitment
@@ -345,15 +365,17 @@ export default function App({ client }: { client: QuestLedgerClient }) {
             setForm={setForm}
             state={state}
             submit={() =>
-              submitCommitment(
-                modal === 'commitmentTopup'
-                  ? 'topup'
-                  : modal === 'commitmentSpend'
-                    ? 'spend'
-                    : modal === 'commitmentRebalance'
-                      ? 'rebalance'
-                      : 'adjust',
-              )
+              modal === 'commitmentTrueUp'
+                ? trueUp()
+                : submitCommitment(
+                    modal === 'commitmentTopup'
+                      ? 'topup'
+                      : modal === 'commitmentSpend'
+                        ? 'spend'
+                        : modal === 'commitmentRebalance'
+                          ? 'rebalance'
+                          : 'adjust',
+                  )
             }
             busy={busy}
           />

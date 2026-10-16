@@ -64,7 +64,7 @@ export function GoalCard({
               spend();
             }}
           >
-            Spent
+            Expense
           </button>
         )}
       </div>

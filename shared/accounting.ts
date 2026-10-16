@@ -54,6 +54,48 @@ export function monthlyOutflow(commitments: Commitment[]): number {
   }, 0);
 }
 
+/** Totals of `money_added`, highest first. A blank source is "Unrecorded". */
+export function cashBySource(
+  events: { type: string; amount?: number; source?: string }[],
+): { source: string; amount: number }[] {
+  const totals = new Map<string, { source: string; amount: number }>();
+  for (const event of events) {
+    if (event.type !== 'money_added') continue;
+    const raw = (event.source || '').trim();
+    const key = raw.toLowerCase();
+    const row = totals.get(key) ?? { source: raw || 'Unrecorded', amount: 0 };
+    row.amount += Number(event.amount || 0);
+    totals.set(key, row);
+  }
+  return [...totals.values()].sort((a, b) => b.amount - a.amount || a.source.localeCompare(b.source));
+}
+
+/**
+ * Totals of `money_added` by the location recorded on the inflow, highest first.
+ * Saved locations with no inflow stay at zero. A blank location is "Unspecified".
+ */
+export function cashByLocation(
+  events: { type: string; amount?: number; location?: string }[],
+  accounts: { name: string }[] = [],
+): { location: string; amount: number }[] {
+  const totals = new Map<string, { location: string; amount: number }>();
+  const rowFor = (name: string) => {
+    const raw = name.trim();
+    const key = raw.toLowerCase();
+    const row = totals.get(key) ?? { location: raw || 'Unspecified', amount: 0 };
+    totals.set(key, row);
+    return row;
+  };
+  for (const account of accounts) {
+    if (account.name.trim()) rowFor(account.name);
+  }
+  for (const event of events) {
+    if (event.type !== 'money_added') continue;
+    rowFor(event.location || '').amount += Number(event.amount || 0);
+  }
+  return [...totals.values()].sort((a, b) => b.amount - a.amount || a.location.localeCompare(b.location));
+}
+
 export function levelProgress(xp: number) {
   const perLevel = xpConfig.perLevel;
   return {
@@ -76,7 +118,7 @@ export function characterStats(input: {
     ['contribution', 'commitment_top_up'].includes(x.type),
   ).length;
   const adjustments = input.events.filter((x) =>
-    ['transfer', 'expense', 'withdrawal', 'spend', 'commitment_spend', 'commitment_deduction'].includes(
+    ['transfer', 'expense', 'withdrawal', 'spend', 'commitment_spend', 'commitment_deduction', 'commitment_true_up'].includes(
       x.type,
     ),
   ).length;
