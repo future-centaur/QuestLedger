@@ -8,12 +8,8 @@
 //
 // Two deliberate choices:
 //
-// 1. Money fields stay `number` (float64) here. That is the current, wrong
-//    behaviour — decision D2 in docs/handoff.md calls for NUMERIC(14,2) or integer
-//    minor units at the Postgres move. Typing them as a branded `Money` now would
-//    make the ~120 arithmetic sites fail to compile with no runtime benefit, and
-//    this repo cannot typecheck `backend/` anyway (tsconfig `include: ["src"]`).
-//    Deliberately not fixed here.
+// 1. Money fields are integer cents (100 cents = 1 shilling). Postgres stores
+//    the same value as numeric(14,2). The store converts at the boundary.
 //
 // 2. `Goal` is a discriminated union, not the current single loose type. This is
 //    decision D1: the split into `goals` + `commitment_periods` is deferred to the
@@ -24,7 +20,7 @@
 export type GoalKind = 'goal' | 'expense';
 export type Frequency = 'daily' | 'weekly' | 'monthly' | 'yearly';
 
-/** Money as float64 — see note (1) above. Not acceptable long-term (D2). */
+/** Integer cents. 100 cents is one shilling. */
 export type Money = number;
 
 export type Account = { id: string; name: string };
@@ -181,6 +177,8 @@ export type State = {
   unallocated: Money;
   /** Unallocated + quest stocks + commitment reserves. */
   atHand?: Money;
+  /** False when those stocks do not match the event history. */
+  booksAgree?: boolean;
   stats: Record<string, number>;
   recurringHealth?: RecurringHealth;
 };

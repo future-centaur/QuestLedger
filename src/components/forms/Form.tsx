@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import type { State } from '../../../shared/types';
 import { isStandalone } from '../../../shared/types';
-import { parsePositive } from '../../../shared/money';
+import { parseCents } from '../../../shared/money';
 import { money } from '../../format/display';
 
 export function Form({
@@ -120,10 +120,10 @@ export function Form({
         </p>
         <button
           className="primary full"
-          disabled={parsePositive(form.amount) === null || !form.source || busy}
+          disabled={parseCents(form.amount) === null || !form.source || busy}
           onClick={() => submit()}
         >
-          Add {form.amount ? money(Number(form.amount)) : "money"}
+          Add {parseCents(form.amount) !== null ? money(parseCents(form.amount)!) : "money"}
         </button>
       </>
     );
@@ -167,7 +167,7 @@ export function Form({
         {f("deadline", "Deadline", "date")}
         <button
           className="primary full"
-          disabled={!form.name || parsePositive(form.target) === null || !form.bucket || busy}
+          disabled={!form.name || parseCents(form.target) === null || !form.bucket || busy}
           onClick={() => submit()}
         >
           Create quest
@@ -204,8 +204,8 @@ export function Form({
           className="primary full"
           disabled={
             !form.goalId ||
-            parsePositive(form.amount) === null ||
-            Number(form.amount) > state.unallocated ||
+            parseCents(form.amount) === null ||
+            (parseCents(form.amount) ?? 0) > state.unallocated ||
             busy
           }
           onClick={() => submit()}
@@ -226,7 +226,7 @@ export function Form({
         : kind === "commitment"
           ? Number(commitment?.balance || 0)
           : state.unallocated;
-    const amount = parsePositive(form.amount);
+    const amount = parseCents(form.amount);
     return (
       <>
         <label>
@@ -310,7 +310,7 @@ export function Form({
         <button
           className="primary full"
           disabled={
-            !form.goalId || parsePositive(form.amount) === null || busy
+            !form.goalId || parseCents(form.amount) === null || busy
           }
           onClick={() => submit()}
         >
@@ -373,7 +373,7 @@ export function Form({
           className="primary full"
           disabled={
             !form.name ||
-            parsePositive(form.amount) === null ||
+            parseCents(form.amount) === null ||
             !form.frequency ||
             !form.bucket ||
             busy
@@ -469,7 +469,7 @@ export function Form({
         )}
         <button
           className="primary full"
-          disabled={parsePositive(form.target) === null || busy}
+          disabled={parseCents(form.target) === null || busy}
           onClick={() => submit()}
         >
           Save target
@@ -608,8 +608,8 @@ export function Form({
         <button
           className="primary full"
           disabled={
-            parsePositive(form.amount) === null ||
-            Number(form.amount) > state.unallocated ||
+            parseCents(form.amount) === null ||
+            (parseCents(form.amount) ?? 0) > state.unallocated ||
             busy
           }
           onClick={() => submit()}
@@ -625,7 +625,7 @@ export function Form({
         {f("reason", "What was it for?")}
         <button
           className="primary full"
-          disabled={parsePositive(form.amount) === null || busy}
+          disabled={parseCents(form.amount) === null || busy}
           onClick={() => submit()}
         >
           Mark spent
@@ -655,7 +655,7 @@ export function Form({
         {f("reason", "Reason")}
         <button
           className="primary full"
-          disabled={parsePositive(form.amount) === null || busy}
+          disabled={parseCents(form.amount) === null || busy}
           onClick={() => submit()}
         >
           Rebalance
@@ -665,7 +665,7 @@ export function Form({
   if (modal === "commitmentTrueUp") {
     const commitment = state.commitments.find((c) => c.id === form.commitmentId);
     const estimate = Number(form.estimate || 0);
-    const actual = parsePositive(form.amount);
+    const actual = parseCents(form.amount);
     const balance = Number(commitment?.balance || 0);
     const after = actual === null ? null : balance - (actual - estimate);
     return (
@@ -716,7 +716,7 @@ export function Form({
           className="primary full"
           disabled={
             (!form.amount && !form.frequency) ||
-            (!!form.amount && parsePositive(form.amount) === null) ||
+            (!!form.amount && parseCents(form.amount) === null) ||
             busy
           }
           onClick={() => submit()}
@@ -783,7 +783,7 @@ export function Form({
           className="primary full"
           disabled={
             !form.from ||
-            parsePositive(form.amount) === null ||
+            parseCents(form.amount) === null ||
             ((form.kind || "transfer") === "transfer" && !form.to) ||
             busy
           }

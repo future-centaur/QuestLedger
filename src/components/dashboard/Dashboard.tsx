@@ -67,6 +67,7 @@ export function Dashboard({
           <strong>{money(commitmentReserved)}</strong>
         </div>
       </section>
+      {state.booksAgree === false && <p className="muted">The balances do not match the history.</p>}
       <div className="actions">
         <button className="primary" onClick={add}>
           <CircleDollarSign /> Add money

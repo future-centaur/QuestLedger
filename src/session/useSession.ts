@@ -7,6 +7,7 @@ import {
   reservedInCommitments,
   totalHeld,
 } from '../../shared/accounting';
+import { centsToDecimal } from '../../shared/money';
 import type { Commitment, Goal, State, User } from '../../shared/types';
 import { createLedgerApi } from '../api/ledger';
 import { errorMessage } from '../client';
@@ -141,7 +142,7 @@ export function useSession(client: QuestLedgerClient) {
     run(() =>
       api.createGoal({
         name: form.name,
-        target: Number(form.target),
+        target: form.target,
         bucket: form.bucket,
         account: form.account,
         deadline: form.deadline || undefined,
@@ -149,10 +150,9 @@ export function useSession(client: QuestLedgerClient) {
       }),
     );
 
-  const allocate = () => run(() => api.contribute(form.goalId, Number(form.amount)));
+  const allocate = () => run(() => api.contribute(form.goalId, form.amount));
 
-  const addMoney = () =>
-    run(() => api.addMoney(Number(form.amount), form.location || '', form.source || ''));
+  const addMoney = () => run(() => api.addMoney(form.amount, form.location || '', form.source || ''));
 
   const addInPlace = async (field: 'source' | 'location', name: string) => {
     setBusy(true);
@@ -175,7 +175,7 @@ export function useSession(client: QuestLedgerClient) {
         kind: form.kind || 'transfer',
         from: form.from,
         to: form.to,
-        amount: Number(form.amount),
+        amount: form.amount,
         reason: form.reason || '',
       }),
     );
@@ -183,14 +183,14 @@ export function useSession(client: QuestLedgerClient) {
   const complete = (g: Goal) => run(() => api.completeGoal(g.id));
 
   const spend = (g: Goal, amount?: number) =>
-    run(() => api.spendGoal(g.id, amount || g.saved, form.reason || ''));
+    run(() => api.spendGoal(g.id, centsToDecimal(amount ?? g.saved), form.reason || ''));
 
   const recordExpense = () => {
     const source = form.source || 'unallocated';
     const [kind, sourceId] = source.split(':');
     return run(() =>
       api.recordExpense({
-        amount: Number(form.amount),
+        amount: form.amount,
         reason: form.reason || '',
         source: kind,
         sourceId,
@@ -203,7 +203,7 @@ export function useSession(client: QuestLedgerClient) {
     run(() =>
       api.createCommitment({
         name: form.name,
-        amount: Number(form.amount),
+        amount: form.amount,
         frequency: form.frequency,
         dueDay: Number(form.dueDay || 1),
         kind: form.kind || 'expense',
@@ -214,7 +214,7 @@ export function useSession(client: QuestLedgerClient) {
 
   const movement = () => ({
     id: form.commitmentId,
-    amount: Number(form.amount),
+    amount: form.amount,
     reason: form.reason || '',
     to: form.to,
   });
@@ -224,7 +224,7 @@ export function useSession(client: QuestLedgerClient) {
       return run(() =>
         api.adjustCommitment({
           id: form.commitmentId,
-          amount: form.amount !== undefined && form.amount !== '' ? Number(form.amount) : undefined,
+          amount: form.amount !== undefined && form.amount !== '' ? form.amount : undefined,
           frequency: form.frequency !== undefined && form.frequency !== '' ? form.frequency : undefined,
         }),
       );
@@ -243,7 +243,7 @@ export function useSession(client: QuestLedgerClient) {
 
   const updateGoal = () => run(() => api.updateGoal(form));
   const adjustQuestTarget = () =>
-    run(() => api.adjustTarget({ id: form.id, target: Number(form.target), releaseTo: form.releaseTo }));
+    run(() => api.adjustTarget({ id: form.id, target: form.target, releaseTo: form.releaseTo }));
   const archiveQuest = () => run(() => api.archiveGoal({ id: form.id, releaseTo: form.releaseTo }));
   const updateCommitment = () =>
     run(() =>
@@ -261,7 +261,7 @@ export function useSession(client: QuestLedgerClient) {
       api.trueUpCommitment({
         id: form.commitmentId,
         periodKey: form.periodKey,
-        amount: Number(form.amount),
+        amount: form.amount,
       }),
     );
   const addNamed = (v?: Record<string, string>) =>

@@ -37,9 +37,9 @@ export function archivedQuests(goals: Goal[]): Goal[] {
   return goals.filter((g) => isStandalone(g) && g.status === 'archived');
 }
 
-/** Estimated monthly outflow across every commitment row, archived included. */
+/** Estimated monthly outflow across every commitment row, archived included. Cents, rounded. */
 export function monthlyOutflow(commitments: Commitment[]): number {
-  return commitments.reduce((s, x) => {
+  const total = commitments.reduce((s, x) => {
     const amount = Number(x.amount || 0);
     return (
       s +
@@ -52,6 +52,53 @@ export function monthlyOutflow(commitments: Commitment[]): number {
             : amount)
     );
   }, 0);
+  return Math.round(total);
+}
+
+type BooksEvent = { type: string; amount?: number; commitmentId?: string; reason?: string };
+
+/**
+ * The envelope check: stocks plus money that has left equal money that arrived.
+ * Transfers between stocks cancel out, so they are not counted here.
+ * A true-up stores the actual, and the matching deduction is the estimate it replaces.
+ */
+export function booksBalance(input: {
+  unallocated: number;
+  goals: Goal[];
+  commitments: Commitment[];
+  events: BooksEvent[];
+}): { held: number; arrived: number; left: number; agrees: boolean } {
+  const held =
+    Number(input.unallocated || 0) + allocatedToQuests(input.goals) + reservedInCommitments(input.commitments);
+  const deductionCount = new Map<string, number>();
+  const deductionAmount = new Map<string, number>();
+  for (const event of input.events) {
+    if (event.type !== 'commitment_deduction' || !event.commitmentId || !event.reason) continue;
+    const key = `${event.commitmentId}:${event.reason}`;
+    deductionCount.set(key, (deductionCount.get(key) ?? 0) + 1);
+    deductionAmount.set(key, Number(event.amount || 0));
+  }
+  let arrived = 0;
+  let left = 0;
+  let broken = false;
+  for (const event of input.events) {
+    const amount = Number(event.amount || 0);
+    if (event.type === 'money_added' || event.type === 'commitment_migration') arrived += amount;
+    else if (
+      event.type === 'expense' ||
+      event.type === 'withdrawal' ||
+      event.type === 'spend' ||
+      event.type === 'commitment_spend' ||
+      event.type === 'commitment_deduction'
+    )
+      left += amount;
+    else if (event.type === 'commitment_true_up') {
+      const key = event.commitmentId && event.reason ? `${event.commitmentId}:${event.reason}` : '';
+      if ((key ? deductionCount.get(key) : 0) !== 1) broken = true;
+      else left += amount - (deductionAmount.get(key) ?? 0);
+    }
+  }
+  return { held, arrived, left, agrees: !broken && held + left === arrived };
 }
 
 /** Totals of `money_added`, highest first. A blank source is "Unrecorded". */
@@ -132,7 +179,7 @@ export function characterStats(input: {
     ),
     power: Math.min(
       100,
-      Math.round((input.goalAllocated + input.commitmentReserved + input.unallocated) / 1000),
+      Math.round((input.goalAllocated + input.commitmentReserved + input.unallocated) / 100_000),
     ),
     adaptability: Math.min(100, adjustments * 10),
   };
