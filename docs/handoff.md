@@ -4,6 +4,26 @@ Newest session first. When a session ends, prepend a dated block above the previ
 
 ---
 
+## 2026-10-18 — The envelope ledger is honest
+
+Branch `main`. Merged in https://github.com/future-centaur/QuestLedger/pull/3. Production is https://questledger-one.vercel.app once Vercel finishes that deploy.
+
+Money in the app is an integer number of cents. Postgres still stores `numeric(14,2)`. The store converts at the boundary. A whole shilling still displays as a whole shilling. Any remainder shows two digits. A third decimal place is rejected.
+
+The three stocks move in the database. The column becomes the column plus the delta, and the update refuses to go below zero. An ordinary save does not write `unallocated`, `saved`, or `balance`. A money command that fails rolls back, including a failure after a write.
+
+Held plus what has left must equal what arrived. Held is unallocated, standalone quest `saved`, and commitment `balance`. Arrived is `money_added` and `commitment_migration`. Left is `expense`, `withdrawal`, `spend`, `commitment_spend`, `commitment_deduction`, and each `commitment_true_up` minus its matching deduction. Transfers between stocks are not counted. If the totals disagree, the command is undone and the dashboard says the balances do not match the history. Do not rewrite the stocks or the events to force a match.
+
+A period deduction and a true-up are each unique. The event is written before the reserve moves, so a second request for the same period does nothing.
+
+Stay an envelope ledger.
+
+### Next: M-Pesa first
+
+Integrate with M-Pesa before any bank. It is a check against the outside M-Pesa account. It does not make a location into a live balance, and it does not turn the books into debits and credits. The user still assigns money. The app still does not discover a spend the user never recorded.
+
+---
+
 ## 2026-10-16 — Arrival totals, and keep the envelope
 
 Branch `main`. Local until it is pushed. Production is still https://questledger-one.vercel.app.
