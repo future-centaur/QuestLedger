@@ -1,6 +1,6 @@
 import { createLedger } from '../domain/ledger.js';
 import type { CronEvent } from '../domain/ledger';
-import { CommandFailure } from '../domain/outcome';
+import { CommandFailure } from '../domain/outcome.js';
 import type { Outcome } from '../domain/outcome';
 import { transaction } from '../db/client.js';
 import { ensureMigrated } from '../db/migrate.js';
