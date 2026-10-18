@@ -20,6 +20,7 @@ import { GoalDetail } from './components/quests/GoalDetail';
 import { Goals } from './components/quests/Goals';
 import type { QuestLedgerClient } from './client';
 import { tabs, useSession } from './session/useSession';
+import { centsToDecimal } from '../shared/money';
 
 const titles: Record<string, string> = {
   goal: 'New Quest',
@@ -266,7 +267,7 @@ export default function App({ client }: { client: QuestLedgerClient }) {
             setModal('goalEdit');
           }}
           adjustTarget={(g) => {
-            setForm({ id: g.id, target: String(g.target), releaseTo: 'unallocated' });
+            setForm({ id: g.id, target: centsToDecimal(g.target), releaseTo: 'unallocated' });
             setModal('goalTarget');
           }}
           archive={(g) => {

@@ -1,6 +1,6 @@
 import { createLedger } from '../domain/ledger.js';
 import type { CronEvent } from '../domain/ledger';
-import type { Outcome } from '../domain/outcome';
+import { CommandFailure, type Outcome } from '../domain/outcome';
 import { transaction } from '../db/client.js';
 import { ensureMigrated } from '../db/migrate.js';
 import { neonStore } from '../store.neon.js';
@@ -235,8 +235,17 @@ export async function handleRequest(request: Request): Promise<Response> {
         if (!uid) response = json({ message: 'Sign in required' }, 401);
         else {
           const { json: body } = await readBody(request);
-          const outcome = await transaction(() => command(uid, body));
-          response = outcome.ok ? json(outcome.data) : json({ message: outcome.message }, outcome.status);
+          try {
+            const outcome = await transaction(async () => {
+              const result = await command(uid, body);
+              if (!result.ok) throw new CommandFailure(result);
+              return result;
+            });
+            response = json(outcome.data);
+          } catch (error) {
+            if (!(error instanceof CommandFailure)) throw error;
+            response = json({ message: error.failure.message }, error.failure.status);
+          }
         }
       }
     }

@@ -1,8 +1,9 @@
 import type { Commitment, Goal } from '../../shared/types';
-import { currency } from '../../shared/config';
+import { formatMoney } from '../../shared/money';
 
-export function money(n: number): string {
-  return `${currency.symbol} ${Math.round(n).toLocaleString(currency.locale)}`;
+/** `cents` is an integer number of cents. A whole shilling stays whole. */
+export function money(cents: number): string {
+  return formatMoney(cents);
 }
 
 export function dateText(v?: string): string {
@@ -30,7 +31,7 @@ export function cyclesText(c: Commitment): string {
     balance = Number(c.balance || 0);
   if (!amount) return '0 cycles';
   const full = Math.floor(balance / amount),
-    remainder = Math.round(balance % amount);
+    remainder = balance % amount;
   return full
     ? `${full} full ${c.frequency}${full === 1 ? '' : 's'}${remainder ? ` + ${money(remainder)}` : ''}`
     : `0 full cycles + ${money(remainder)}`;

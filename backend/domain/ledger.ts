@@ -5,12 +5,13 @@ import {
 } from '../../shared/config.js';
 import {
   allocatedToQuests,
+  booksBalance,
   characterStats,
   monthlyOutflow,
   reservedInCommitments,
   totalHeld,
 } from '../../shared/accounting.js';
-import { parsePositive } from '../../shared/money.js';
+import { formatMoney, parseCents } from '../../shared/money.js';
 import { isPeriod } from '../../shared/types.js';
 import type { Commitment, Event, Goal, NewCommitment, Profile } from '../../shared/types';
 import type { LedgerStore } from '../store';
@@ -88,15 +89,20 @@ export function createLedger(store: LedgerStore) {
     for (const c of commitments) {
       if (c.fundingMigrated === true) continue;
       const linked = goals.items.filter((g) => g.commitmentId === c.id);
-      const oldAllocated = linked.reduce((s, g) => s + Number(g.saved || 0), 0);
-      const balance = Number(c.balance || 0) + oldAllocated;
-      const updated = { ...c, balance, nextDueAt: c.nextDueAt || nextDueAt(c), fundingMigrated: true };
-      await store.update('commitments', [{ id: c.id, record: updated }]);
+      let oldAllocated = 0;
+      for (const g of linked) {
+        const released = await store.releaseSaved(g.id, uid, false);
+        oldAllocated += released ?? 0;
+        await store.update('goals', [
+          { id: g.id, record: { ...g, periodStatus: 'migrated_to_commitment' } },
+        ]);
+      }
+      await store.update('commitments', [
+        { id: c.id, record: { ...c, nextDueAt: c.nextDueAt || nextDueAt(c), fundingMigrated: true } },
+      ]);
       if (oldAllocated > 0) {
-        await store.update(
-          'goals',
-          linked.map((g) => ({ id: g.id, record: { ...g, saved: 0, periodStatus: 'migrated_to_commitment' } })),
-        );
+        const moved = await move('commitments', c.id, uid, oldAllocated);
+        if (!moved) throw new Error('Could not move migrated commitment balance');
         await store.add('events', [
           {
             type: 'commitment_migration',
@@ -153,6 +159,7 @@ export function createLedger(store: LedgerStore) {
     const commitmentReserved = reservedInCommitments(c.items);
     const prof = p.items[0];
     const unallocated = Number(prof?.unallocated || 0);
+    const books = booksBalance({ unallocated, goals: g.items, commitments, events });
     return {
       goals: g.items,
       accounts: a.items,
@@ -162,6 +169,7 @@ export function createLedger(store: LedgerStore) {
       events,
       unallocated,
       atHand: totalHeld(unallocated, g.items, commitments),
+      booksAgree: books.agrees,
       xp: prof?.xp || 0,
       stats: characterStats({
         goals: g.items,
@@ -184,10 +192,28 @@ export function createLedger(store: LedgerStore) {
     return readState(uid);
   }
 
-  async function changeGoal(uid: string, id: string, delta: number) {
-    const [g] = await store.get<Goal>('goals', [id]);
-    if (!g || g.ownerUserId !== uid || g.saved + delta < 0) return false;
-    return (await store.update('goals', [{ id, record: { ...g, saved: g.saved + delta } }]))[0];
+  function move(table: 'profile' | 'goals' | 'commitments', id: string, uid: string, deltaCents: number) {
+    return store.moveStock({ table, id, ownerUserId: uid, deltaCents });
+  }
+
+  async function booksNow(uid: string) {
+    const [goals, events, profiles, commitments] = await Promise.all([
+      store.list<Goal>('goals', { filter: { ownerUserId: uid } }),
+      store.list<Event>('events', { filter: { ownerUserId: uid } }),
+      store.list<Profile>('profile', { filter: { ownerUserId: uid } }),
+      store.list<Commitment>('commitments', { filter: { ownerUserId: uid } }),
+    ]);
+    return booksBalance({
+      unallocated: Number(profiles.items[0]?.unallocated || 0),
+      goals: goals.items,
+      commitments: commitments.items,
+      events: events.items,
+    });
+  }
+
+  async function requireBooks(uid: string) {
+    const books = await booksNow(uid);
+    return books.agrees ? null : fail('The balances do not match the history', 409);
   }
 
   async function getCommitment(uid: string, id: string) {
@@ -205,39 +231,40 @@ export function createLedger(store: LedgerStore) {
     const key = duePeriodKey(c, due);
     const instance = goals.items.find((g) => g.commitmentId === c.id && g.periodKey === key);
     const prior = await store.list<Event>('events', { limit: listLimits.events, filter: { ownerUserId: uid } });
+    const reason = 'period:' + key;
     const already = prior.items.some(
-      (e) => e.type === 'commitment_deduction' && e.commitmentId === c.id && e.reason === 'period:' + key,
+      (e) => e.type === 'commitment_deduction' && e.commitmentId === c.id && e.reason === reason,
     );
     if (already) return false;
-    if (instance && Number(instance.spent || 0) > 0) {
-      const advanced = {
-        ...c,
-        nextDueAt: nextDueAt(
-          { ...c, amount: c.pendingAmount ?? c.amount, frequency: c.pendingFrequency ?? c.frequency },
-          due,
-        ),
-        amount: c.pendingAmount ?? c.amount,
-        frequency: c.pendingFrequency ?? c.frequency,
-        pendingAmount: undefined,
-        pendingFrequency: undefined,
-      };
-      await store.update('commitments', [{ id: c.id, record: advanced }]);
-      await event(uid, {
-        type: 'commitment_deduction',
-        amount: 0,
-        commitmentId: c.id,
-        reason: 'period:' + key,
-        createdAt: new Date().toISOString(),
-      });
-      return true;
-    }
+    if (!(await booksNow(uid)).agrees) return false;
+    const handClosed = Boolean(instance && Number(instance.spent || 0) > 0);
     const dueAmount = Number(c.pendingAmount ?? c.amount);
     const balance = Number(c.balance || 0);
-    const amount = Math.min(balance, dueAmount);
-    const underfunded = amount < dueAmount;
-    const next = {
+    const amount = handClosed ? 0 : Math.min(balance, dueAmount);
+    const marked = await store.insertPeriodMark({
+      ownerUserId: uid,
+      type: 'commitment_deduction',
+      amount,
+      commitmentId: c.id,
+      reason,
+      createdAt: new Date().toISOString(),
+    });
+    if (!marked) return false;
+    if (amount > 0) {
+      const moved = await move('commitments', c.id, uid, -amount);
+      if (!moved) {
+        await store.deleteEvent(marked);
+        return false;
+      }
+    }
+    if (!(await booksNow(uid)).agrees) {
+      if (amount > 0) await move('commitments', c.id, uid, amount);
+      await store.deleteEvent(marked);
+      return false;
+    }
+    const underfunded = !handClosed && amount < dueAmount;
+    const advanced = {
       ...c,
-      balance: balance - amount,
       nextDueAt: nextDueAt(
         { ...c, amount: c.pendingAmount ?? c.amount, frequency: c.pendingFrequency ?? c.frequency },
         due,
@@ -247,21 +274,14 @@ export function createLedger(store: LedgerStore) {
       pendingAmount: undefined,
       pendingFrequency: undefined,
     };
-    await store.update('commitments', [{ id: c.id, record: next }]);
-    await event(uid, {
-      type: 'commitment_deduction',
-      amount,
-      commitmentId: c.id,
-      reason: 'period:' + key,
-      createdAt: new Date().toISOString(),
-    });
-    if (instance) {
+    await store.update('commitments', [{ id: c.id, record: advanced }]);
+    if (instance && !handClosed) {
+      await store.releaseSaved(instance.id, uid, false);
       await store.update('goals', [
         {
           id: instance.id,
           record: {
             ...instance,
-            saved: 0,
             spent: amount,
             status: underfunded ? 'active' : 'completed',
             periodStatus: underfunded ? 'underfunded' : 'spent',
@@ -294,16 +314,14 @@ export function createLedger(store: LedgerStore) {
   }
 
   async function addMoney(uid: string, body: any): Promise<Outcome<{ ok: true }>> {
-    const n = parsePositive(body.amount);
+    const n = parseCents(body.amount);
     if (n === null) return fail('Enter a positive amount', 400);
     const source = typeof body.source === 'string' ? body.source.trim() : '';
     if (!source) return fail('Source name required', 400);
     const p = await profile(uid);
     if (!p) return fail('Profile unavailable', 500);
-    const updated = await store.update('profile', [
-      { id: p.id, record: { ...p, unallocated: Number(p.unallocated || 0) + n } },
-    ]);
-    if (!updated[0]) return fail('Could not add money', 500);
+    const updated = await move('profile', p.id, uid, n);
+    if (!updated) return fail('Could not add money', 500);
     const id = await event(uid, {
       type: 'money_added',
       amount: n,
@@ -313,11 +331,13 @@ export function createLedger(store: LedgerStore) {
     });
     if (!id) return fail('Money was added but its history event failed', 500);
     await xp(uid, 2);
+    const broken = await requireBooks(uid);
+    if (broken) return broken;
     return ok({ ok: true });
   }
 
   async function createGoal(uid: string, body: any): Promise<Outcome<{ id: string }>> {
-    const n = parsePositive(body.target);
+    const n = parseCents(body.target);
     if (!body.name || n === null || !body.bucket) return fail('Missing required quest fields', 400);
     const [id] = await store.add('goals', [
       {
@@ -361,7 +381,7 @@ export function createLedger(store: LedgerStore) {
   }
 
   async function adjustTarget(uid: string, body: any): Promise<Outcome<{ ok: true }>> {
-    const n = parsePositive(body.target);
+    const n = parseCents(body.target);
     const [g] = await store.get<Goal>('goals', [body.id]);
     if (!g || g.ownerUserId !== uid || isPeriod(g) || g.status === 'archived')
       return fail('Quest cannot be adjusted', 400);
@@ -370,15 +390,14 @@ export function createLedger(store: LedgerStore) {
     if (excess > 0) {
       if (!body.releaseTo)
         return fail(
-          `The new target releases ${excess.toLocaleString()} from this quest. Choose where that money goes.`,
+          `The new target releases ${formatMoney(excess)} from this quest. Choose where that money goes.`,
           400,
         );
       if (body.releaseTo === 'unallocated') {
         const p = await profile(uid);
         if (!p) return fail('Profile unavailable', 500);
-        await store.update('profile', [
-          { id: p.id, record: { ...p, unallocated: Number(p.unallocated || 0) + excess } },
-        ]);
+        if (!(await move('goals', g.id, uid, -excess))) return fail('Not enough allocation to release', 409);
+        if (!(await move('profile', p.id, uid, excess))) return fail('Could not release the excess', 500);
       } else {
         const [destination] = await store.get<Goal>('goals', [body.releaseTo]);
         if (
@@ -389,7 +408,8 @@ export function createLedger(store: LedgerStore) {
           destination.id === g.id
         )
           return fail('Choose a valid destination quest', 400);
-        await changeGoal(uid, destination.id, excess);
+        if (!(await move('goals', g.id, uid, -excess))) return fail('Not enough allocation to release', 409);
+        if (!(await move('goals', destination.id, uid, excess))) return fail('Choose a valid destination quest', 400);
         await event(uid, {
           type: 'transfer',
           from: g.id,
@@ -400,14 +420,16 @@ export function createLedger(store: LedgerStore) {
         });
       }
     }
-    await store.update('goals', [{ id: g.id, record: { ...g, target: n, saved: Number(g.saved || 0) - excess } }]);
+    await store.update('goals', [{ id: g.id, record: { ...g, target: n } }]);
     await event(uid, {
       type: 'goal_target_change',
       goalId: g.id,
       amount: n,
-      reason: `Target changed from ${g.target} to ${n}${excess ? `; ${excess} released` : ''}`,
+      reason: `Target changed from ${formatMoney(Number(g.target || 0))} to ${formatMoney(n)}${excess ? `; ${formatMoney(excess)} released` : ''}`,
       createdAt: new Date().toISOString(),
     });
+    const broken = await requireBooks(uid);
+    if (broken) return broken;
     return ok({ ok: true });
   }
 
@@ -416,49 +438,53 @@ export function createLedger(store: LedgerStore) {
     if (!g || g.ownerUserId !== uid || isPeriod(g) || g.status === 'archived')
       return fail('Quest cannot be archived', 400);
     const balance = Number(g.saved || 0);
-    if (balance > 0) {
-      if (!body.releaseTo)
-        return fail(`Reallocate the remaining ${balance.toLocaleString()} before archiving`, 400);
+    if (balance > 0 && !body.releaseTo)
+      return fail(`Reallocate the remaining ${formatMoney(balance)} before archiving`, 400);
+    if (balance > 0 && body.releaseTo !== 'unallocated') {
+      const [destination] = await store.get<Goal>('goals', [body.releaseTo]);
+      if (
+        !destination ||
+        destination.ownerUserId !== uid ||
+        isPeriod(destination) ||
+        destination.status === 'archived' ||
+        destination.id === g.id
+      )
+        return fail('Choose a valid destination quest', 400);
+    }
+    const released = await store.releaseSaved(g.id, uid, true);
+    if (released === null) return fail('Quest cannot be archived', 400);
+    if (released > 0) {
+      if (!body.releaseTo) return fail(`Reallocate the remaining ${formatMoney(released)} before archiving`, 400);
       if (body.releaseTo === 'unallocated') {
         const p = await profile(uid);
-        if (!p) return fail('Profile unavailable', 500);
-        await store.update('profile', [
-          { id: p.id, record: { ...p, unallocated: Number(p.unallocated || 0) + balance } },
-        ]);
+        if (!p || !(await move('profile', p.id, uid, released))) return fail('Profile unavailable', 500);
       } else {
-        const [destination] = await store.get<Goal>('goals', [body.releaseTo]);
-        if (
-          !destination ||
-          destination.ownerUserId !== uid ||
-          isPeriod(destination) ||
-          destination.status === 'archived' ||
-          destination.id === g.id
-        )
-          return fail('Choose a valid destination quest', 400);
-        await changeGoal(uid, destination.id, balance);
+        if (!(await move('goals', body.releaseTo, uid, released))) return fail('Choose a valid destination quest', 400);
         await event(uid, {
           type: 'transfer',
           from: g.id,
-          to: destination.id,
-          amount: balance,
+          to: body.releaseTo,
+          amount: released,
           reason: 'Allocation moved before quest archive',
           createdAt: new Date().toISOString(),
         });
       }
     }
-    await store.update('goals', [{ id: g.id, record: { ...g, saved: 0, status: 'archived', archived: true } }]);
+    await store.update('goals', [{ id: g.id, record: { ...g, status: 'archived', archived: true } }]);
     await event(uid, {
       type: 'goal_archive',
       goalId: g.id,
-      amount: balance,
+      amount: released,
       createdAt: new Date().toISOString(),
-      reason: balance ? 'Remaining allocation reallocated before archive' : 'Quest archived',
+      reason: released ? 'Remaining allocation reallocated before archive' : 'Quest archived',
     });
+    const broken = await requireBooks(uid);
+    if (broken) return broken;
     return ok({ ok: true });
   }
 
   async function contribute(uid: string, body: any): Promise<Outcome<{ ok: true }>> {
-    const n = parsePositive(body.amount);
+    const n = parseCents(body.amount);
     if (!body.goalId || n === null) return fail('Invalid allocation', 400);
     const p = await profile(uid);
     const available = Number(p?.unallocated || 0);
@@ -466,8 +492,8 @@ export function createLedger(store: LedgerStore) {
     const [g] = await store.get<Goal>('goals', [body.goalId]);
     if (!g || g.ownerUserId !== uid || g.status === 'archived' || isPeriod(g))
       return fail('Quest is not available for allocation', 400);
-    await store.update('profile', [{ id: p.id, record: { ...p, unallocated: available - n } }]);
-    if (!(await changeGoal(uid, body.goalId, n))) return fail('Could not update quest', 500);
+    if (!(await move('profile', p.id, uid, -n))) return fail('Not enough unallocated money', 400);
+    if (!(await move('goals', body.goalId, uid, n))) return fail('Could not update quest', 500);
     const id = await event(uid, {
       type: 'contribution',
       goalId: body.goalId,
@@ -476,11 +502,13 @@ export function createLedger(store: LedgerStore) {
     });
     if (!id) return fail('Allocation was not recorded', 500);
     await xp(uid, 5);
+    const broken = await requireBooks(uid);
+    if (broken) return broken;
     return ok({ ok: true });
   }
 
   async function createCommitment(uid: string, body: any): Promise<Outcome<{ id: string }>> {
-    const n = parsePositive(body.amount);
+    const n = parseCents(body.amount);
     const frequency = String(body.frequency || '');
     const dueDay = Number(body.dueDay || 1);
     if (!body.name || n === null || !validFrequency(frequency) || !body.bucket)
@@ -528,15 +556,15 @@ export function createLedger(store: LedgerStore) {
   }
 
   async function topUpCommitment(uid: string, body: any): Promise<Outcome<{ ok: true }>> {
-    const n = parsePositive(body.amount);
+    const n = parseCents(body.amount);
     if (!body.id || n === null) return fail('Enter a positive top-up amount', 400);
     const cmt = await getCommitment(uid, body.id);
     if (!cmt) return fail('Commitment not found', 404);
     const p = await profile(uid);
     const available = Number(p?.unallocated || 0);
     if (!p || n > available) return fail('Not enough unallocated money', 400);
-    await store.update('profile', [{ id: p.id, record: { ...p, unallocated: available - n } }]);
-    await store.update('commitments', [{ id: cmt.id, record: { ...cmt, balance: Number(cmt.balance || 0) + n } }]);
+    if (!(await move('profile', p.id, uid, -n))) return fail('Not enough unallocated money', 400);
+    if (!(await move('commitments', cmt.id, uid, n))) return fail('Could not reserve the money', 500);
     const id = await event(uid, {
       type: 'commitment_top_up',
       commitmentId: cmt.id,
@@ -545,32 +573,37 @@ export function createLedger(store: LedgerStore) {
     });
     if (!id) return fail('Top-up was not recorded', 500);
     await xp(uid, 5);
+    const broken = await requireBooks(uid);
+    if (broken) return broken;
     return ok({ ok: true });
   }
 
   async function spendCommitment(uid: string, body: any): Promise<Outcome<{ ok: true }>> {
-    const n = parsePositive(body.amount);
+    const n = parseCents(body.amount);
     if (!body.id || n === null) return fail('Enter a valid spending amount', 400);
     const cmt = await getCommitment(uid, body.id);
     if (!cmt || n > Number(cmt.balance || 0)) return fail('Spending exceeds the reserved balance', 400);
     const closesCycle = body.closesCycle === true;
     const due = new Date(cmt.nextDueAt || nextDueAt(cmt));
-    const balance = Number(cmt.balance || 0) - n;
-    const record = closesCycle
-      ? {
-          ...cmt,
-          balance,
-          nextDueAt: nextDueAt(
-            { ...cmt, amount: cmt.pendingAmount ?? cmt.amount, frequency: cmt.pendingFrequency ?? cmt.frequency },
-            due,
-          ),
-          amount: cmt.pendingAmount ?? cmt.amount,
-          frequency: cmt.pendingFrequency ?? cmt.frequency,
-          pendingAmount: undefined,
-          pendingFrequency: undefined,
-        }
-      : { ...cmt, balance };
-    await store.update('commitments', [{ id: cmt.id, record }]);
+    if (!(await move('commitments', cmt.id, uid, -n))) return fail('Spending exceeds the reserved balance', 400);
+    if (closesCycle) {
+      await store.update('commitments', [
+        {
+          id: cmt.id,
+          record: {
+            ...cmt,
+            nextDueAt: nextDueAt(
+              { ...cmt, amount: cmt.pendingAmount ?? cmt.amount, frequency: cmt.pendingFrequency ?? cmt.frequency },
+              due,
+            ),
+            amount: cmt.pendingAmount ?? cmt.amount,
+            frequency: cmt.pendingFrequency ?? cmt.frequency,
+            pendingAmount: undefined,
+            pendingFrequency: undefined,
+          },
+        },
+      ]);
+    }
     const id = await event(uid, {
       type: 'commitment_spend',
       commitmentId: cmt.id,
@@ -581,6 +614,8 @@ export function createLedger(store: LedgerStore) {
     if (!id) return fail('Spending was not recorded', 500);
     if (closesCycle) await noteActualSpend(uid, cmt, n);
     await xp(uid, 10);
+    const broken = await requireBooks(uid);
+    if (broken) return broken;
     return ok({ ok: true });
   }
 
@@ -608,12 +643,12 @@ export function createLedger(store: LedgerStore) {
       ]);
       return;
     }
+    await store.releaseSaved(instance.id, uid, false);
     await store.update('goals', [
       {
         id: instance.id,
         record: {
           ...instance,
-          saved: 0,
           spent: Number(instance.spent || 0) + amount,
           status: 'completed',
           periodStatus: 'spent',
@@ -623,14 +658,14 @@ export function createLedger(store: LedgerStore) {
   }
 
   async function recordExpense(uid: string, body: any): Promise<Outcome<{ ok: true }>> {
-    const n = parsePositive(body.amount);
+    const n = parseCents(body.amount);
     if (n === null) return fail('Enter a positive amount', 400);
     const source = body.source;
     if (source === 'unallocated') {
       const p = await profile(uid);
       const available = Number(p?.unallocated || 0);
       if (!p || n > available) return fail('Not enough unallocated money', 400);
-      await store.update('profile', [{ id: p.id, record: { ...p, unallocated: available - n } }]);
+      if (!(await move('profile', p.id, uid, -n))) return fail('Not enough unallocated money', 400);
       const id = await event(uid, {
         type: 'expense',
         amount: n,
@@ -639,19 +674,26 @@ export function createLedger(store: LedgerStore) {
       });
       if (!id) return fail('Expense was not recorded', 500);
       await xp(uid, 10);
+      const broken = await requireBooks(uid);
+      if (broken) return broken;
       return ok({ ok: true });
     }
-    if (source === 'goal') return spendGoal(uid, { goalId: body.sourceId, amount: n, reason: body.reason });
+    if (source === 'goal') return spendGoal(uid, { goalId: body.sourceId, amount: body.amount, reason: body.reason });
     if (source === 'commitment') {
       if (body.closesCycle !== true && body.closesCycle !== false)
         return fail('Say whether this spends the current cycle', 400);
-      return spendCommitment(uid, { id: body.sourceId, amount: n, reason: body.reason, closesCycle: body.closesCycle });
+      return spendCommitment(uid, {
+        id: body.sourceId,
+        amount: body.amount,
+        reason: body.reason,
+        closesCycle: body.closesCycle,
+      });
     }
     return fail('Choose where the money comes from', 400);
   }
 
   async function trueUpCommitment(uid: string, body: any): Promise<Outcome<{ ok: true }>> {
-    const actual = parsePositive(body.amount);
+    const actual = parseCents(body.amount);
     const periodKey = typeof body.periodKey === 'string' ? body.periodKey : '';
     if (!body.id || !periodKey || actual === null) return fail('Enter the actual amount for that day', 400);
     const cmt = await getCommitment(uid, body.id);
@@ -673,34 +715,39 @@ export function createLedger(store: LedgerStore) {
     const balance = Number(cmt.balance || 0);
     const extra = actual - estimate;
     if (extra > balance) return fail('Not enough reserved money for the higher actual', 400);
-    await store.update('commitments', [{ id: cmt.id, record: { ...cmt, balance: balance - extra } }]);
-    await store.update('goals', [
-      {
-        id: instance.id,
-        record: { ...instance, saved: 0, spent: actual, status: 'completed', periodStatus: 'spent' },
-      },
-    ]);
-    const id = await event(uid, {
+    const marked = await store.insertPeriodMark({
+      ownerUserId: uid,
       type: 'commitment_true_up',
-      commitmentId: cmt.id,
       amount: actual,
+      commitmentId: cmt.id,
       reason,
       createdAt: new Date().toISOString(),
     });
-    if (!id) return fail('The actual was not recorded', 500);
+    if (!marked) return fail('That day already has an actual', 400);
+    if (extra !== 0 && !(await move('commitments', cmt.id, uid, -extra)))
+      return fail('Not enough reserved money for the higher actual', 400);
+    await store.releaseSaved(instance.id, uid, false);
+    await store.update('goals', [
+      {
+        id: instance.id,
+        record: { ...instance, spent: actual, status: 'completed', periodStatus: 'spent' },
+      },
+    ]);
+    const broken = await requireBooks(uid);
+    if (broken) return broken;
     return ok({ ok: true });
   }
 
   async function rebalanceCommitment(uid: string, body: any): Promise<Outcome<{ ok: true }>> {
-    const n = parsePositive(body.amount);
+    const n = parseCents(body.amount);
     if (!body.id || n === null) return fail('Enter a valid amount', 400);
     const cmt = await getCommitment(uid, body.id);
     if (!cmt || n > Number(cmt.balance || 0)) return fail('Not enough commitment balance', 400);
     if (body.to === 'unallocated') {
       const p = await profile(uid);
       if (!p) return fail('Profile unavailable', 500);
-      await store.update('commitments', [{ id: cmt.id, record: { ...cmt, balance: Number(cmt.balance || 0) - n } }]);
-      await store.update('profile', [{ id: p.id, record: { ...p, unallocated: Number(p.unallocated || 0) + n } }]);
+      if (!(await move('commitments', cmt.id, uid, -n))) return fail('Not enough commitment balance', 400);
+      if (!(await move('profile', p.id, uid, n))) return fail('Profile unavailable', 500);
       const id = await event(uid, {
         type: 'commitment_rebalance',
         commitmentId: cmt.id,
@@ -710,14 +757,14 @@ export function createLedger(store: LedgerStore) {
         createdAt: new Date().toISOString(),
       });
       if (!id) return fail('Rebalance was not recorded', 500);
+      const broken = await requireBooks(uid);
+      if (broken) return broken;
       return ok({ ok: true });
     }
     const target = await getCommitment(uid, body.to);
     if (!target || target.id === cmt.id) return fail('Choose another commitment', 400);
-    await store.update('commitments', [
-      { id: cmt.id, record: { ...cmt, balance: Number(cmt.balance || 0) - n } },
-      { id: target.id, record: { ...target, balance: Number(target.balance || 0) + n } },
-    ]);
+    if (!(await move('commitments', cmt.id, uid, -n))) return fail('Not enough commitment balance', 400);
+    if (!(await move('commitments', target.id, uid, n))) return fail('Choose another commitment', 400);
     const id = await event(uid, {
       type: 'commitment_rebalance',
       commitmentId: cmt.id,
@@ -727,6 +774,8 @@ export function createLedger(store: LedgerStore) {
       createdAt: new Date().toISOString(),
     });
     if (!id) return fail('Rebalance was not recorded', 500);
+    const broken = await requireBooks(uid);
+    if (broken) return broken;
     return ok({ ok: true });
   }
 
@@ -748,10 +797,12 @@ export function createLedger(store: LedgerStore) {
     const cmt = await getCommitment(uid, body.id);
     if (!cmt) return fail('Commitment not found', 404);
     const record: any = { ...cmt };
+    let nextAmount: number | undefined;
     if (body.amount !== undefined && body.amount !== '') {
-      const n = parsePositive(body.amount);
+      const n = parseCents(body.amount);
       if (n === null) return fail('Amount must be positive', 400);
       record.pendingAmount = n;
+      nextAmount = n;
     }
     if (body.frequency !== undefined && body.frequency !== '') {
       if (!validFrequency(body.frequency)) return fail('Invalid frequency', 400);
@@ -760,11 +811,11 @@ export function createLedger(store: LedgerStore) {
     if (record.pendingAmount === undefined && record.pendingFrequency === undefined)
       return fail('No change supplied', 400);
     await store.update('commitments', [{ id: cmt.id, record }]);
-    if (body.amount !== undefined && body.amount !== '')
+    if (nextAmount !== undefined)
       await event(uid, {
         type: 'commitment_amount_change',
         commitmentId: cmt.id,
-        amount: Number(body.amount),
+        amount: nextAmount,
         reason: 'Effective next cycle',
         createdAt: new Date().toISOString(),
       });
@@ -831,15 +882,16 @@ export function createLedger(store: LedgerStore) {
   }
 
   async function spendGoal(uid: string, body: any): Promise<Outcome<{ ok: true }>> {
-    const n = parsePositive(body.amount);
+    const n = parseCents(body.amount);
     if (!body.goalId || n === null) return fail('Enter a valid spending amount', 400);
     const [g] = await store.get<Goal>('goals', [body.goalId]);
     if (!g || g.ownerUserId !== uid || isPeriod(g) || g.status === 'archived' || n > g.saved)
       return fail('Spending exceeds the remaining allocation', 400);
-    const remaining = g.saved - n;
+    const updated = await move('goals', g.id, uid, -n);
+    if (!updated) return fail('Spending exceeds the remaining allocation', 400);
     const spent = (g.spent || 0) + n;
-    const status = remaining === 0 ? 'archived' : g.status;
-    await store.update('goals', [{ id: g.id, record: { ...g, saved: remaining, spent, status } }]);
+    const status = Number(updated.saved) === 0 ? 'archived' : g.status;
+    await store.update('goals', [{ id: g.id, record: { ...g, spent, status } }]);
     const id = await event(uid, {
       type: 'spend',
       goalId: g.id,
@@ -849,18 +901,19 @@ export function createLedger(store: LedgerStore) {
     });
     if (!id) return fail('Spending was not recorded', 500);
     await xp(uid, 10);
+    const broken = await requireBooks(uid);
+    if (broken) return broken;
     return ok({ ok: true });
   }
 
   async function rebalance(uid: string, body: any): Promise<Outcome<{ ok: true }>> {
-    const n = parsePositive(body.amount);
+    const n = parseCents(body.amount);
     if (!body.from || n === null) return fail('Choose a source quest and positive amount', 400);
-    if (!(await changeGoal(uid, body.from, -n))) return fail('The source quest does not have enough allocation', 400);
+    if (body.kind === 'transfer' && (!body.to || body.to === body.from))
+      return fail('Choose a different valid destination quest', 400);
+    if (!(await move('goals', body.from, uid, -n))) return fail('The source quest does not have enough allocation', 400);
     if (body.kind === 'transfer') {
-      if (!body.to || body.to === body.from || !(await changeGoal(uid, body.to, n))) {
-        await changeGoal(uid, body.from, n);
-        return fail('Choose a different valid destination quest', 400);
-      }
+      if (!(await move('goals', body.to, uid, n))) return fail('Choose a different valid destination quest', 400);
       const id = await event(uid, {
         type: 'transfer',
         from: body.from,
@@ -881,6 +934,8 @@ export function createLedger(store: LedgerStore) {
       if (!id) return fail('Adjustment was not recorded', 500);
     }
     await xp(uid, 10);
+    const broken = await requireBooks(uid);
+    if (broken) return broken;
     return ok({ ok: true });
   }
 

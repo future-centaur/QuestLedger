@@ -1,15 +1,19 @@
-import type { LedgerStore } from './store';
+import type { LedgerStore, PeriodMark, StockMove } from './store';
 import { query } from './db/client.js';
 import { transaction } from './db/client.js';
+import { centsToDecimal, decimalToCents } from '../shared/money.js';
 
-type Kind = 'text' | 'num' | 'bool' | 'int' | 'time' | 'id';
+type Kind = 'text' | 'num' | 'money' | 'bool' | 'int' | 'time' | 'id';
+
+/** Ordinary updates must not write these. Stocks move only through `moveStock` and `releaseSaved`. */
+const STOCK_COLUMNS = new Set(['unallocated', 'saved', 'balance']);
 
 const columns: Record<string, Record<string, { column: string; kind: Kind }>> = {
   profile: {
     id: { column: 'id', kind: 'id' },
     ownerUserId: { column: 'owner_user_id', kind: 'id' },
     xp: { column: 'xp', kind: 'num' },
-    unallocated: { column: 'unallocated', kind: 'num' },
+    unallocated: { column: 'unallocated', kind: 'money' },
   },
   accounts: {
     id: { column: 'id', kind: 'id' },
@@ -30,9 +34,9 @@ const columns: Record<string, Record<string, { column: string; kind: Kind }>> = 
     id: { column: 'id', kind: 'id' },
     ownerUserId: { column: 'owner_user_id', kind: 'id' },
     name: { column: 'name', kind: 'text' },
-    target: { column: 'target', kind: 'num' },
-    saved: { column: 'saved', kind: 'num' },
-    spent: { column: 'spent', kind: 'num' },
+    target: { column: 'target', kind: 'money' },
+    saved: { column: 'saved', kind: 'money' },
+    spent: { column: 'spent', kind: 'money' },
     bucket: { column: 'bucket', kind: 'text' },
     account: { column: 'account', kind: 'text' },
     deadline: { column: 'deadline', kind: 'text' },
@@ -47,16 +51,16 @@ const columns: Record<string, Record<string, { column: string; kind: Kind }>> = 
     id: { column: 'id', kind: 'id' },
     ownerUserId: { column: 'owner_user_id', kind: 'id' },
     name: { column: 'name', kind: 'text' },
-    amount: { column: 'amount', kind: 'num' },
+    amount: { column: 'amount', kind: 'money' },
     frequency: { column: 'frequency', kind: 'text' },
     dueDay: { column: 'due_day', kind: 'int' },
     kind: { column: 'kind', kind: 'text' },
     bucket: { column: 'bucket', kind: 'text' },
     account: { column: 'account', kind: 'text' },
     active: { column: 'active', kind: 'bool' },
-    balance: { column: 'balance', kind: 'num' },
+    balance: { column: 'balance', kind: 'money' },
     nextDueAt: { column: 'next_due_at', kind: 'time' },
-    pendingAmount: { column: 'pending_amount', kind: 'num' },
+    pendingAmount: { column: 'pending_amount', kind: 'money' },
     pendingFrequency: { column: 'pending_frequency', kind: 'text' },
     fundingMigrated: { column: 'funding_migrated', kind: 'bool' },
     archived: { column: 'archived', kind: 'bool' },
@@ -65,7 +69,7 @@ const columns: Record<string, Record<string, { column: string; kind: Kind }>> = 
     id: { column: 'id', kind: 'id' },
     ownerUserId: { column: 'owner_user_id', kind: 'id' },
     type: { column: 'type', kind: 'text' },
-    amount: { column: 'amount', kind: 'num' },
+    amount: { column: 'amount', kind: 'money' },
     from: { column: 'from_ref', kind: 'text' },
     to: { column: 'to_ref', kind: 'text' },
     goalId: { column: 'goal_id', kind: 'id' },
@@ -98,7 +102,8 @@ function fromDb(table: string, row: Record<string, unknown>): Record<string, unk
       else out[key] = raw;
       continue;
     }
-    if (meta.kind === 'num' || meta.kind === 'int') out[key] = Number(raw);
+    if (meta.kind === 'money') out[key] = decimalToCents(String(raw));
+    else if (meta.kind === 'num' || meta.kind === 'int') out[key] = Number(raw);
     else if (meta.kind === 'time') out[key] = raw instanceof Date ? raw.toISOString() : String(raw);
     else out[key] = raw;
   }
@@ -106,8 +111,14 @@ function fromDb(table: string, row: Record<string, unknown>): Record<string, unk
 }
 
 function toDb(kind: Kind, value: unknown): unknown {
-  if (value === undefined) return null;
+  if (value === undefined || value === null) return null;
   if (kind === 'time' && value instanceof Date) return value.toISOString();
+  if (kind === 'money') {
+    if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+      throw new Error(`Money must be integer cents, got ${String(value)}`);
+    }
+    return centsToDecimal(value);
+  }
   return value;
 }
 
@@ -127,6 +138,7 @@ function pairs(table: string, record: Record<string, unknown>, includeUndefined:
 function cast(kind: Kind): string {
   if (kind === 'id') return '::uuid';
   if (kind === 'time') return '::timestamptz';
+  if (kind === 'money') return '::numeric';
   return '';
 }
 
@@ -170,7 +182,7 @@ export const neonStore: LedgerStore = {
   async update(table, records) {
     const updated = [];
     for (const { id, record } of records) {
-      const fields = pairs(table, record, true);
+      const fields = pairs(table, record, true).filter((field) => !STOCK_COLUMNS.has(field.column));
       if (!fields.length) continue;
       const assignments = fields.map((field, index) => `${quote(field.column)} = $${index + 1}${cast(field.kind)}`);
       const params = [...fields.map((field) => field.value), id];
@@ -181,5 +193,72 @@ export const neonStore: LedgerStore = {
       if (rows[0]) updated.push(fromDb(table, rows[0]));
     }
     return updated;
+  },
+  async moveStock(move: StockMove) {
+    if (!Number.isSafeInteger(move.deltaCents)) throw new Error('Stock delta must be integer cents');
+    const stock =
+      move.table === 'profile'
+        ? { column: 'unallocated', guard: '' }
+        : move.table === 'goals'
+          ? {
+              column: 'saved',
+              guard: `AND commitment_id IS NULL AND ($1::numeric <= 0 OR status IS DISTINCT FROM 'archived')`,
+            }
+          : { column: 'balance', guard: '' };
+    const rows = await query<Record<string, unknown>>(
+      `UPDATE ${quote(move.table)}
+       SET ${stock.column} = ${stock.column} + $1::numeric
+       WHERE id = $2::uuid
+         AND owner_user_id = $3::uuid
+         AND ${stock.column} + $1::numeric >= 0
+         ${stock.guard}
+       RETURNING *`,
+      [centsToDecimal(move.deltaCents), move.id, move.ownerUserId],
+    );
+    return rows[0] ? fromDb(move.table, rows[0]) : null;
+  },
+  async releaseSaved(id, ownerUserId, standaloneOnly) {
+    const rows = await query<{ released: string }>(
+      `WITH prev AS (
+         SELECT id, saved
+         FROM goals
+         WHERE id = $1::uuid
+           AND owner_user_id = $2::uuid
+           AND ($3::boolean IS NOT TRUE OR commitment_id IS NULL)
+         FOR UPDATE
+       )
+       UPDATE goals AS g
+       SET saved = 0
+       FROM prev
+       WHERE g.id = prev.id
+       RETURNING prev.saved AS released`,
+      [id, ownerUserId, standaloneOnly],
+    );
+    return rows[0] ? decimalToCents(String(rows[0].released)) : null;
+  },
+  async insertPeriodMark(record: PeriodMark) {
+    const predicate =
+      record.type === 'commitment_deduction'
+        ? `type = 'commitment_deduction' AND reason IS NOT NULL`
+        : `type = 'commitment_true_up' AND reason IS NOT NULL`;
+    const rows = await query<{ id: string }>(
+      `INSERT INTO events (owner_user_id, type, amount, commitment_id, created_at, reason)
+       VALUES ($1::uuid, $2, $3::numeric, $4::uuid, $5::timestamptz, $6)
+       ON CONFLICT (commitment_id, reason) WHERE ${predicate}
+       DO NOTHING
+       RETURNING id`,
+      [
+        record.ownerUserId,
+        record.type,
+        centsToDecimal(record.amount),
+        record.commitmentId,
+        record.createdAt,
+        record.reason,
+      ],
+    );
+    return rows[0]?.id ?? null;
+  },
+  async deleteEvent(id) {
+    await query(`DELETE FROM events WHERE id = $1::uuid`, [id]);
   },
 };

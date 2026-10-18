@@ -8,19 +8,19 @@ import type { QuestLedgerClient } from '../client';
 export function createLedgerApi(client: QuestLedgerClient) {
   return {
     getState: () => client.get<State>('/api/state'),
-    addMoney: (amount: number, location: string, source: string) =>
+    addMoney: (amount: string, location: string, source: string) =>
       client.post('/api/money', { amount, location, source }),
     createGoal: (body: Record<string, unknown>) => client.post('/api/goals', body),
     updateGoal: (body: Record<string, unknown>) => client.post('/api/goals/update', body),
     adjustTarget: (body: Record<string, unknown>) => client.post('/api/goals/adjust-target', body),
     archiveGoal: (body: Record<string, unknown>) => client.post('/api/goals/archive', body),
-    contribute: (goalId: string, amount: number) => client.post('/api/contributions', { goalId, amount }),
+    contribute: (goalId: string, amount: string) => client.post('/api/contributions', { goalId, amount }),
     rebalance: (body: Record<string, unknown>) => client.post('/api/rebalance', body),
     completeGoal: (goalId: string) => client.post('/api/complete', { goalId }),
-    spendGoal: (goalId: string, amount: number, reason: string) =>
+    spendGoal: (goalId: string, amount: string, reason: string) =>
       client.post('/api/spend', { goalId, amount, reason }),
     recordExpense: (body: {
-      amount: number;
+      amount: string;
       reason: string;
       source: string;
       sourceId?: string;
@@ -29,7 +29,7 @@ export function createLedgerApi(client: QuestLedgerClient) {
     createCommitment: (body: Record<string, unknown>) => client.post('/api/commitments', body),
     topUpCommitment: (body: Record<string, unknown>) => client.post('/api/commitments/topup', body),
     spendCommitment: (body: Record<string, unknown>) => client.post('/api/commitments/spend', body),
-    trueUpCommitment: (body: { id: string; periodKey: string; amount: number }) =>
+    trueUpCommitment: (body: { id: string; periodKey: string; amount: string }) =>
       client.post('/api/commitments/true-up', body),
     rebalanceCommitment: (body: Record<string, unknown>) => client.post('/api/commitments/rebalance', body),
     adjustCommitment: (body: Record<string, unknown>) => client.post('/api/commitments/adjust', body),
