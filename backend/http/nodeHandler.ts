@@ -1,6 +1,7 @@
 import { createLedger } from '../domain/ledger.js';
 import type { CronEvent } from '../domain/ledger';
-import { CommandFailure, type Outcome } from '../domain/outcome';
+import { CommandFailure } from '../domain/outcome';
+import type { Outcome } from '../domain/outcome';
 import { transaction } from '../db/client.js';
 import { ensureMigrated } from '../db/migrate.js';
 import { neonStore } from '../store.neon.js';
@@ -203,7 +204,13 @@ function cronAuthorized(request: Request): boolean {
 }
 
 export async function handleRequest(request: Request): Promise<Response> {
-  await ensureMigrated();
+  try {
+    await ensureMigrated();
+  } catch (error) {
+    console.error(error);
+    const detail = error instanceof Error ? error.message : 'Could not update the database';
+    return json({ message: detail }, 500);
+  }
   if (request.method === 'OPTIONS') {
     const origin = allowOrigin(request);
     const headers = new Headers();
